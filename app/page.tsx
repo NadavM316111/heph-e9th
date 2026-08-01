@@ -277,7 +277,7 @@ export default function App() {
 
   useEffect(() => {
     fetchListings({ categoryId: selectedCategory, q: searchQ, condition: filterCondition, minPrice: filterMinPrice, maxPrice: filterMaxPrice });
-  }, [selectedCategory]);
+  }, [selectedCategory]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const emails = Array.from(new Set(listings.map((l) => l.seller_email)));
