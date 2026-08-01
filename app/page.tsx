@@ -75,6 +75,7 @@ type Order = {
 };
 
 type SellerOrderItem = {
+  id?: number;
   order_item_id: number;
   order_id: number;
   listing_id: number;
