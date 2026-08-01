@@ -29,6 +29,11 @@ type Listing = {
   category_name: string;
 };
 
+type CartItem = {
+  listing: Listing;
+  quantity: number;
+};
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
@@ -68,6 +73,13 @@ export default function App() {
   const [view, setView] = useState<"browse" | "sell" | "mylistings" | "profile">("browse");
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
   const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
+
+  // Cart
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [cartOpen, setCartOpen] = useState(false);
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [checkoutError, setCheckoutError] = useState("");
+  const [addedToCart, setAddedToCart] = useState(false);
 
   // New listing form
   const [formTitle, setFormTitle] = useState("");
@@ -441,6 +453,58 @@ export default function App() {
     fetchListings(selectedCategory);
   }
 
+  function addToCart(listing: Listing, qty: number) {
+    setCart((prev) => {
+      const existing = prev.find((i) => i.listing.id === listing.id);
+      if (existing) {
+        return prev.map((i) =>
+          i.listing.id === listing.id
+            ? { ...i, quantity: Math.min(i.quantity + qty, listing.quantity) }
+            : i
+        );
+      }
+      return [...prev, { listing, quantity: Math.min(qty, listing.quantity) }];
+    });
+    setAddedToCart(true);
+    setTimeout(() => setAddedToCart(false), 1800);
+  }
+
+  function removeFromCart(listingId: number) {
+    setCart((prev) => prev.filter((i) => i.listing.id !== listingId));
+  }
+
+  function cartTotal() {
+    return cart.reduce((sum, i) => sum + i.listing.price_cents * i.quantity, 0);
+  }
+
+  async function handleCheckout() {
+    setCheckoutError("");
+    setCheckoutLoading(true);
+    try {
+      const items = cart.map((i) => ({
+        name: i.listing.title,
+        amount_cents: i.listing.price_cents,
+        quantity: i.quantity,
+        seller_email: i.listing.seller_email,
+      }));
+      const res = await fetch("/api/marketplace/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.url) {
+        setCheckoutError(data.error || "Checkout failed. Please try again.");
+      } else {
+        window.location.href = data.url;
+      }
+    } catch {
+      setCheckoutError("Network error. Please try again.");
+    } finally {
+      setCheckoutLoading(false);
+    }
+  }
+
   async function handleRemoveListing(listing: Listing) {
     if (!confirm("Remove this listing?")) return;
     await fetch("/api/my-listings", {
@@ -464,6 +528,11 @@ export default function App() {
       justifyContent: "space-between", height: 60, position: "sticky", top: 0, zIndex: 100,
     },
     logo: { fontSize: 24, fontWeight: 800, color: "#e05c2a", letterSpacing: -1, cursor: "pointer" },
+    cartBtn: {
+      padding: "8px 14px", borderRadius: 8, border: "1px solid #ddd",
+      cursor: "pointer", fontSize: 14, fontWeight: 600,
+      background: "#fff", color: "#444", position: "relative" as const,
+    },
     nav: { display: "flex", gap: 8, alignItems: "center" },
     navBtn: {
       padding: "8px 16px", borderRadius: 8, border: "none",
@@ -860,6 +929,12 @@ export default function App() {
           <button style={view === "profile" ? s.navBtnActive : s.navBtn} onClick={() => setView("profile")}>
             Profile
           </button>
+          <button
+            style={{ ...s.cartBtn, color: cart.length > 0 ? "#e05c2a" : "#444", borderColor: cart.length > 0 ? "#e05c2a" : "#ddd" }}
+            onClick={() => setCartOpen(true)}
+          >
+            🛒 Cart{cart.length > 0 ? ` (${cart.reduce((n, i) => n + i.quantity, 0)})` : ""}
+          </button>
           <span style={{ fontSize: 13, color: "#888", marginLeft: 8 }}>{user.email}</span>
           <button style={s.secondaryBtn} onClick={handleLogout}>Sign out</button>
         </div>
@@ -978,6 +1053,103 @@ export default function App() {
               <div style={{ fontSize: 12, color: "#999", marginTop: 4 }}>
                 Listed {new Date(selectedListing.created_at).toLocaleDateString()}
               </div>
+            </div>
+
+            {/* Add to cart */}
+            {selectedListing.seller_email !== user.email && selectedListing.status === "active" && selectedListing.quantity > 0 && (
+              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                <button
+                  style={{ ...s.primaryBtn, padding: "14px 32px", fontSize: 16 }}
+                  onClick={() => { addToCart(selectedListing, 1); setCartOpen(true); }}
+                >
+                  🛒 Add to Cart
+                </button>
+                {addedToCart && (
+                  <span style={{ color: "#15803d", fontWeight: 600, fontSize: 14 }}>✓ Added!</span>
+                )}
+              </div>
+            )}
+            {selectedListing.seller_email === user.email && (
+              <div style={{ color: "#888", fontSize: 14, fontStyle: "italic" }}>This is your listing.</div>
+            )}
+            {selectedListing.status !== "active" && (
+              <div style={{ color: "#b91c1c", fontSize: 14, fontWeight: 600 }}>This listing is no longer available.</div>
+            )}
+          </div>
+        )}
+
+        {/* ── Cart Modal ── */}
+        {cartOpen && (
+          <div style={s.modal} onClick={(e) => { if (e.target === e.currentTarget) setCartOpen(false); }}>
+            <div style={{ ...s.modalBox, maxWidth: 520 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                <div style={{ fontSize: 20, fontWeight: 700 }}>Your Cart</div>
+                <button
+                  onClick={() => setCartOpen(false)}
+                  style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer", color: "#888", lineHeight: 1 }}
+                >×</button>
+              </div>
+
+              {cart.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "40px 0", color: "#999" }}>
+                  <div style={{ fontSize: 40, marginBottom: 10 }}>🛒</div>
+                  <div style={{ fontSize: 16, fontWeight: 600 }}>Your cart is empty</div>
+                  <button
+                    style={{ ...s.secondaryBtn, marginTop: 16 }}
+                    onClick={() => setCartOpen(false)}
+                  >Browse listings</button>
+                </div>
+              ) : (
+                <>
+                  {cart.map((item) => (
+                    <div key={item.listing.id} style={{
+                      display: "flex", alignItems: "center", gap: 14,
+                      padding: "12px 0", borderBottom: "1px solid #f0f0f0",
+                    }}>
+                      {item.listing.photos?.[0]
+                        ? <img src={item.listing.photos[0]} alt={item.listing.title}
+                            style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 8, flexShrink: 0 }} />
+                        : <div style={{ width: 60, height: 60, borderRadius: 8, background: "#f0ede8",
+                            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, flexShrink: 0 }}>📦</div>
+                      }
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {item.listing.title}
+                        </div>
+                        <div style={{ fontSize: 13, color: "#888", marginTop: 2 }}>
+                          {formatPrice(item.listing.price_cents)} × {item.quantity}
+                        </div>
+                        <div style={{ fontSize: 12, color: "#aaa" }}>Seller: {item.listing.seller_email}</div>
+                      </div>
+                      <div style={{ fontWeight: 700, fontSize: 15, color: "#e05c2a", flexShrink: 0 }}>
+                        {formatPrice(item.listing.price_cents * item.quantity)}
+                      </div>
+                      <button
+                        onClick={() => removeFromCart(item.listing.id)}
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "#ccc",
+                          fontSize: 20, lineHeight: 1, flexShrink: 0, padding: "0 4px" }}
+                        title="Remove"
+                      >×</button>
+                    </div>
+                  ))}
+
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
+                    marginTop: 20, paddingTop: 16, borderTop: "2px solid #f0f0f0" }}>
+                    <div>
+                      <div style={{ fontSize: 13, color: "#888" }}>Total</div>
+                      <div style={{ fontSize: 24, fontWeight: 800, color: "#e05c2a" }}>{formatPrice(cartTotal())}</div>
+                    </div>
+                    <button
+                      style={{ ...s.primaryBtn, padding: "14px 28px", fontSize: 16 }}
+                      onClick={handleCheckout}
+                      disabled={checkoutLoading}
+                    >
+                      {checkoutLoading ? "Redirecting…" : "Checkout →"}
+                    </button>
+                  </div>
+                  {checkoutError && <div style={{ ...s.error, marginTop: 10 }}>{checkoutError}</div>}
+                </>
+              )}
             </div>
           </div>
         )}
