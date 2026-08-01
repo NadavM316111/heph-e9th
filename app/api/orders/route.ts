@@ -27,6 +27,9 @@ async function ensure() {
     "status TEXT NOT NULL DEFAULT 'pending', " +
     "created_at TIMESTAMPTZ DEFAULT now())"
   );
+  // Add tracking columns if they don't exist yet (idempotent migration)
+  await q("ALTER TABLE " + P + "_order_items ADD COLUMN IF NOT EXISTS tracking_number TEXT", []);
+  await q("ALTER TABLE " + P + "_order_items ADD COLUMN IF NOT EXISTS carrier TEXT", []);
 }
 
 // GET — buyer sees their orders; ?role=seller returns incoming orders for seller
@@ -125,13 +128,37 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ orderId });
 }
 
-// PATCH — mark order paid once Stripe confirms
+// PATCH — mark order paid once Stripe confirms, OR mark item shipped (seller action)
 export async function PATCH(req: NextRequest) {
   const email = getSessionEmail(req);
   if (!email) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   await ensure();
 
   const body = await req.json().catch(() => ({}));
+
+  // Seller marks an order item as shipped
+  if (body.action === "ship") {
+    const { order_item_id, tracking_number, carrier } = body;
+    if (!order_item_id) return NextResponse.json({ error: "Missing order_item_id" }, { status: 400 });
+    if (!tracking_number || !tracking_number.trim())
+      return NextResponse.json({ error: "Tracking number is required" }, { status: 400 });
+    if (!carrier || !carrier.trim())
+      return NextResponse.json({ error: "Carrier is required" }, { status: 400 });
+
+    // Only the seller of this item may mark it shipped
+    const rows = await q(
+      "UPDATE " + P + "_order_items " +
+      "SET status = 'shipped', tracking_number = $1, carrier = $2 " +
+      "WHERE id = $3 AND seller_email = $4 " +
+      "RETURNING id",
+      [tracking_number.trim(), carrier.trim(), order_item_id, email]
+    );
+    if (!rows || rows.length === 0)
+      return NextResponse.json({ error: "Item not found or not your listing" }, { status: 403 });
+    return NextResponse.json({ ok: true });
+  }
+
+  // Default: mark order paid after Stripe checkout
   const { stripe_session_id } = body;
   if (!stripe_session_id) return NextResponse.json({ error: "Missing session" }, { status: 400 });
 

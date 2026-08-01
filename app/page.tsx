@@ -59,6 +59,8 @@ type OrderItem = {
   unit_price_cents: number;
   title_snapshot: string;
   status: string;
+  tracking_number?: string | null;
+  carrier?: string | null;
 };
 
 type Order = {
@@ -83,6 +85,8 @@ type SellerOrderItem = {
   created_at: string;
   shipping_address: ShippingAddress;
   stripe_session_id: string;
+  tracking_number: string | null;
+  carrier: string | null;
 };
 
 type Message = {
@@ -169,6 +173,14 @@ export default function App() {
   const [sellerOrders, setSellerOrders] = useState<SellerOrderItem[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [myListingsTab, setMyListingsTab] = useState<"listings" | "orders" | "messages">("listings");
+
+  // Shipping UI state (seller)
+  const [shipOpen, setShipOpen] = useState<Record<number, boolean>>({});
+  const [shipTracking, setShipTracking] = useState<Record<number, string>>({});
+  const [shipCarrier, setShipCarrier] = useState<Record<number, string>>({});
+  const [shipLoading, setShipLoading] = useState<Record<number, boolean>>({});
+  const [shipSuccess, setShipSuccess] = useState<Record<number, string>>({});
+  const [shipError, setShipError] = useState<Record<number, string>>({});
 
   // Messaging
   const [chatOpen, setChatOpen] = useState(false);
@@ -421,6 +433,41 @@ export default function App() {
       const res = await fetch("/api/orders?role=seller");
       if (res.ok) setSellerOrders(await res.json());
     } catch {}
+  }
+
+  async function handleMarkShipped(itemId: number) {
+    const tracking = (shipTracking[itemId] || "").trim();
+    const carrier = (shipCarrier[itemId] || "").trim();
+    setShipError((prev) => ({ ...prev, [itemId]: "" }));
+    if (!carrier) {
+      setShipError((prev) => ({ ...prev, [itemId]: "Please select a carrier." }));
+      return;
+    }
+    if (!tracking) {
+      setShipError((prev) => ({ ...prev, [itemId]: "Please enter a tracking number." }));
+      return;
+    }
+    setShipLoading((prev) => ({ ...prev, [itemId]: true }));
+    try {
+      const res = await fetch("/api/orders", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "ship", order_item_id: itemId, tracking_number: tracking, carrier }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setShipError((prev) => ({ ...prev, [itemId]: data.error || "Failed to update." }));
+      } else {
+        setShipSuccess((prev) => ({ ...prev, [itemId]: "Marked as shipped! ✓" }));
+        setShipOpen((prev) => ({ ...prev, [itemId]: false }));
+        fetchSellerOrders();
+        setTimeout(() => setShipSuccess((prev) => ({ ...prev, [itemId]: "" })), 4000);
+      }
+    } catch {
+      setShipError((prev) => ({ ...prev, [itemId]: "Network error." }));
+    } finally {
+      setShipLoading((prev) => ({ ...prev, [itemId]: false }));
+    }
   }
 
   async function fetchChatMessages(listingId: number) {
@@ -2371,23 +2418,60 @@ export default function App() {
                     {/* Items */}
                     <div style={{ padding: "0 20px" }}>
                       {order.items.map((item, idx) => (
-                        <div key={idx} style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 0", borderBottom: idx < order.items.length - 1 ? "1px solid #f5f5f5" : "none" }}>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 2 }}>{item.title_snapshot}</div>
-                            <div style={{ fontSize: 12, color: "#888" }}>
-                              Seller: {item.seller_email.split("@")[0]} · Qty: {item.quantity}
+                        <div key={idx} style={{ padding: "14px 0", borderBottom: idx < order.items.length - 1 ? "1px solid #f5f5f5" : "none" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 2 }}>{item.title_snapshot}</div>
+                              <div style={{ fontSize: 12, color: "#888" }}>
+                                Seller: {item.seller_email.split("@")[0]} · Qty: {item.quantity}
+                              </div>
                             </div>
+                            <div style={{ fontWeight: 700, fontSize: 14, color: "#333", flexShrink: 0 }}>
+                              {formatPrice(item.unit_price_cents * item.quantity)}
+                            </div>
+                            <span style={{
+                              ...s.badge,
+                              background: item.status === "shipped" ? "#dbeafe" : "#e8f0fe",
+                              color: item.status === "shipped" ? "#1e40af" : "#1a56db",
+                              fontSize: 11, flexShrink: 0,
+                            }}>
+                              {item.status === "shipped" ? "🚚 Shipped" : item.status}
+                            </span>
                           </div>
-                          <div style={{ fontWeight: 700, fontSize: 14, color: "#333", flexShrink: 0 }}>
-                            {formatPrice(item.unit_price_cents * item.quantity)}
-                          </div>
-                          <span style={{
-                            ...s.badge,
-                            background: "#e8f0fe", color: "#1a56db",
-                            fontSize: 11, flexShrink: 0,
-                          }}>
-                            {item.status}
-                          </span>
+                          {/* Tracking info for buyer */}
+                          {item.status === "shipped" && item.tracking_number && item.carrier && (
+                            <div style={{
+                              marginTop: 8, padding: "8px 12px", borderRadius: 8,
+                              background: "#eff6ff", border: "1px solid #bfdbfe", fontSize: 13,
+                            }}>
+                              <span style={{ fontWeight: 600, color: "#1e40af", marginRight: 6 }}>🚚 Tracking:</span>
+                              <span style={{ color: "#444", marginRight: 6 }}>{item.carrier}</span>
+                              {(() => {
+                                const num = item.tracking_number;
+                                const carrier = item.carrier;
+                                const urls: Record<string, string> = {
+                                  UPS: `https://www.ups.com/track?tracknum=${num}`,
+                                  USPS: `https://tools.usps.com/go/TrackConfirmAction?tLabels=${num}`,
+                                  FedEx: `https://www.fedex.com/fedextrack/?trknbr=${num}`,
+                                  DHL: `https://www.dhl.com/us-en/home/tracking/tracking-express.html?submit=1&tracking-id=${num}`,
+                                  Amazon: `https://www.amazon.com/progress-tracker/package/?ref=ppx_yo2ov_dt_b_track_package`,
+                                };
+                                const url = urls[carrier];
+                                return url ? (
+                                  <a
+                                    href={url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    style={{ fontFamily: "monospace", color: "#1e40af", fontWeight: 700, textDecoration: "underline" }}
+                                  >
+                                    {num}
+                                  </a>
+                                ) : (
+                                  <span style={{ fontFamily: "monospace", fontWeight: 700, color: "#333" }}>{num}</span>
+                                );
+                              })()}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -2520,8 +2604,13 @@ export default function App() {
                             {formatPrice(item.unit_price_cents * item.quantity)}
                           </span>
                           <span style={{ fontSize: 12, color: "#888" }}>× {item.quantity}</span>
-                          <span style={{ ...s.badge, background: "#dcfce7", color: "#166534", fontSize: 11 }}>
-                            {item.status}
+                          <span style={{
+                            ...s.badge,
+                            background: item.status === "shipped" ? "#dbeafe" : "#dcfce7",
+                            color: item.status === "shipped" ? "#1e40af" : "#166534",
+                            fontSize: 11,
+                          }}>
+                            {item.status === "shipped" ? "🚚 Shipped" : item.status}
                           </span>
                         </div>
                       </div>
@@ -2548,6 +2637,94 @@ export default function App() {
                       ) : (
                         <div style={{ padding: "12px 18px", fontSize: 13, color: "#aaa" }}>
                           No shipping address provided · Buyer: {item.buyer_email}
+                        </div>
+                      )}
+
+                      {/* Tracking info (already shipped) */}
+                      {item.status === "shipped" && item.tracking_number && (
+                        <div style={{ padding: "10px 18px", background: "#eff6ff", borderTop: "1px solid #bfdbfe", fontSize: 13 }}>
+                          <span style={{ fontWeight: 600, color: "#1e40af", marginRight: 8 }}>🚚 Tracking:</span>
+                          <span style={{ color: "#333", fontFamily: "monospace" }}>{item.carrier} — {item.tracking_number}</span>
+                        </div>
+                      )}
+
+                      {/* Mark as Shipped section */}
+                      {item.status !== "shipped" && (
+                        <div style={{ padding: "10px 18px", borderTop: "1px solid #f5f5f5", background: "#fafafa" }}>
+                          {shipSuccess[item.id] ? (
+                            <div style={{ color: "#166534", fontWeight: 600, fontSize: 13 }}>{shipSuccess[item.id]}</div>
+                          ) : !shipOpen[item.id] ? (
+                            <button
+                              style={{
+                                padding: "7px 16px", borderRadius: 7, border: "none",
+                                background: "#1e40af", color: "#fff", fontWeight: 600,
+                                fontSize: 13, cursor: "pointer",
+                              }}
+                              onClick={() => setShipOpen((prev) => ({ ...prev, [item.id]: true }))}
+                            >
+                              🚚 Mark as Shipped
+                            </button>
+                          ) : (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const, alignItems: "flex-end" }}>
+                                <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                                  <label style={{ fontSize: 12, fontWeight: 600, color: "#555" }}>Carrier *</label>
+                                  <select
+                                    style={{
+                                      padding: "7px 10px", borderRadius: 7, border: "1px solid #ddd",
+                                      fontSize: 13, background: "#fff", outline: "none", minWidth: 130,
+                                    }}
+                                    value={shipCarrier[item.id] || ""}
+                                    onChange={(e) => setShipCarrier((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                                  >
+                                    <option value="">Select carrier…</option>
+                                    <option value="UPS">UPS</option>
+                                    <option value="USPS">USPS</option>
+                                    <option value="FedEx">FedEx</option>
+                                    <option value="DHL">DHL</option>
+                                    <option value="Amazon">Amazon Logistics</option>
+                                    <option value="Other">Other</option>
+                                  </select>
+                                </div>
+                                <div style={{ display: "flex", flexDirection: "column", gap: 3, flex: 1, minWidth: 160 }}>
+                                  <label style={{ fontSize: 12, fontWeight: 600, color: "#555" }}>Tracking Number *</label>
+                                  <input
+                                    style={{
+                                      padding: "7px 10px", borderRadius: 7, border: "1px solid #ddd",
+                                      fontSize: 13, outline: "none", fontFamily: "monospace",
+                                    }}
+                                    value={shipTracking[item.id] || ""}
+                                    onChange={(e) => setShipTracking((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                                    placeholder="e.g. 1Z999AA10123456784"
+                                  />
+                                </div>
+                                <button
+                                  style={{
+                                    padding: "7px 16px", borderRadius: 7, border: "none",
+                                    background: "#1e40af", color: "#fff", fontWeight: 600,
+                                    fontSize: 13, cursor: shipLoading[item.id] ? "default" : "pointer",
+                                    opacity: shipLoading[item.id] ? 0.7 : 1, flexShrink: 0,
+                                  }}
+                                  disabled={shipLoading[item.id]}
+                                  onClick={() => handleMarkShipped(item.id)}
+                                >
+                                  {shipLoading[item.id] ? "Saving…" : "Confirm Shipped"}
+                                </button>
+                                <button
+                                  style={{
+                                    padding: "7px 12px", borderRadius: 7, border: "1px solid #ddd",
+                                    background: "#fff", color: "#888", fontSize: 13, cursor: "pointer", flexShrink: 0,
+                                  }}
+                                  onClick={() => setShipOpen((prev) => ({ ...prev, [item.id]: false }))}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                              {shipError[item.id] && (
+                                <div style={{ color: "#b91c1c", fontSize: 12 }}>{shipError[item.id]}</div>
+                              )}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
