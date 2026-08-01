@@ -14,7 +14,7 @@ export function hasDb(): boolean {
  * { rows: [...] }, so the array also carries a .rows pointing at itself —
  * both styles work and both typecheck.
  */
-export async function q(text: string, params: any[] = []): Promise<any[] & { rows: any[] }> {
+export async function q(text: string, params: any[] = []): Promise<any> {
   let out: any = [];
   if (client) {
     const parts = text.split(/\$\d+/);

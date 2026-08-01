@@ -340,10 +340,12 @@ export default function App() {
   }
 
   async function fetchOrders() {
+    setOrdersLoading(true);
     try {
       const res = await fetch("/api/orders");
       if (res.ok) setOrders(await res.json());
     } catch {}
+    finally { setOrdersLoading(false); }
   }
 
   async function fetchSellerOrders() {
