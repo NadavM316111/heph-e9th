@@ -34,8 +34,7 @@ type Listing = {
   category_name: string;
 };
 
-type SellerProfile = { display_name: string; avatar_url: string; avg_rating?: number | null; review_count?: number };
-type SellerRating = { avg_rating: number | null; review_count: number };
+type SellerProfile = { display_name: string; avatar_url: string };
 
 type CartItem = {
   listing: Listing;
@@ -53,6 +52,7 @@ type ShippingAddress = {
 };
 
 type OrderItem = {
+  id: number;
   order_id: number;
   listing_id: number;
   seller_email: string;
@@ -137,17 +137,6 @@ export default function App() {
   const [forgotError, setForgotError] = useState("");
   const [forgotSuccess, setForgotSuccess] = useState("");
   const [forgotLoading, setForgotLoading] = useState(false);
-
-  const [sellerRatings, setSellerRatings] = useState<Record<string, SellerRating>>({});
-
-  // Review state
-  const [reviewOpen, setReviewOpen] = useState<Record<number, boolean>>({});
-  const [reviewRating, setReviewRating] = useState<Record<number, number>>({});
-  const [reviewBody, setReviewBody] = useState<Record<number, string>>({});
-  const [reviewLoading, setReviewLoading] = useState<Record<number, boolean>>({});
-  const [reviewError, setReviewError] = useState<Record<number, string>>({});
-  const [reviewSuccess, setReviewSuccess] = useState<Record<number, boolean>>({});
-  const [existingReviews, setExistingReviews] = useState<Record<number, { id: number; rating: number; body: string } | null>>({});
 
   const [sellerStatus, setSellerStatus] = useState<SellerStatus | null>(null);
   const [sellerLoading, setSellerLoading] = useState(false);
@@ -293,9 +282,9 @@ export default function App() {
 
   useEffect(() => {
     const emails = Array.from(new Set(listings.map((l) => l.seller_email)));
-    const missingProfiles = emails.filter((e) => !(e in sellerProfiles));
-    const missingRatings = emails.filter((e) => !(e in sellerRatings));
-    missingProfiles.forEach((email) => {
+    const missing = emails.filter((e) => !(e in sellerProfiles));
+    if (missing.length === 0) return;
+    missing.forEach((email) => {
       fetch(`/api/profile?email=${encodeURIComponent(email)}`)
         .then((r) => r.ok ? r.json() : null)
         .then((data) => {
@@ -305,41 +294,14 @@ export default function App() {
         })
         .catch(() => {});
     });
-    missingRatings.forEach((email) => {
-      fetch(`/api/reviews?seller_email=${encodeURIComponent(email)}`)
-        .then((r) => r.ok ? r.json() : null)
-        .then((data) => {
-          if (data) setSellerRatings((prev) => ({ ...prev, [email]: data as SellerRating }));
-        })
-        .catch(() => {});
-    });
-  }, [listings]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [listings]);
 
   useEffect(() => {
     if (!user) return;
     if (view === "sell") fetchSellerStatus();
     if (view === "purchases") fetchOrders();
-    if (view === "mylistings") {
-      fetchMyListings();
-      fetchSellerOrders();
-      // Fetch own seller rating
-      fetch(`/api/reviews?seller_email=${encodeURIComponent(user.email)}`)
-        .then((r) => r.ok ? r.json() : null)
-        .then((d) => { if (d) setSellerRatings((prev) => ({ ...prev, [user.email]: d as SellerRating })); })
-        .catch(() => {});
-    }
-  }, [view]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Fetch rating when listing detail opens
-  useEffect(() => {
-    if (!selectedListing) return;
-    const email = selectedListing.seller_email;
-    if (sellerRatings[email] !== undefined) return;
-    fetch(`/api/reviews?seller_email=${encodeURIComponent(email)}`)
-      .then((r) => r.ok ? r.json() : null)
-      .then((d) => { if (d) setSellerRatings((prev) => ({ ...prev, [email]: d as SellerRating })); })
-      .catch(() => {});
-  }, [selectedListing]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (view === "mylistings") { fetchMyListings(); fetchSellerOrders(); }
+  }, [view]);
 
   // Poll chat when open
   useEffect(() => {
@@ -497,23 +459,7 @@ export default function App() {
     setOrdersLoading(true);
     try {
       const res = await fetch("/api/orders");
-      if (res.ok) {
-        const data: Order[] = await res.json();
-        setOrders(data);
-        // Pre-fetch existing reviews for delivered items
-        data.forEach((order) => {
-          order.items.forEach((item) => {
-            if (item.status === "delivered") {
-              fetch(`/api/reviews?order_item_id=${item.id}`)
-                .then((r) => r.ok ? r.json() : null)
-                .then((review) => {
-                  setExistingReviews((prev) => ({ ...prev, [item.id]: review }));
-                })
-                .catch(() => {});
-            }
-          });
-        });
-      }
+      if (res.ok) setOrders(await res.json());
     } catch {}
     finally { setOrdersLoading(false); }
   }
@@ -1297,84 +1243,6 @@ export default function App() {
     myListingThumb: { width: 64, height: 64, objectFit: "cover", borderRadius: 8, background: "#f0ede8", flexShrink: 0 },
   };
 
-  async function handleSubmitReview(orderItemId: number, sellerEmail: string) {
-    const rating = reviewRating[orderItemId];
-    if (!rating || rating < 1 || rating > 5) {
-      setReviewError((prev) => ({ ...prev, [orderItemId]: "Please select a star rating." }));
-      return;
-    }
-    setReviewLoading((prev) => ({ ...prev, [orderItemId]: true }));
-    setReviewError((prev) => ({ ...prev, [orderItemId]: "" }));
-    try {
-      const res = await fetch("/api/reviews", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          order_item_id: orderItemId,
-          rating,
-          body: reviewBody[orderItemId] ?? "",
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setReviewError((prev) => ({ ...prev, [orderItemId]: data.error || "Failed to submit review." }));
-      } else {
-        setReviewSuccess((prev) => ({ ...prev, [orderItemId]: true }));
-        setReviewOpen((prev) => ({ ...prev, [orderItemId]: false }));
-        setExistingReviews((prev) => ({
-          ...prev,
-          [orderItemId]: { id: 0, rating, body: reviewBody[orderItemId] ?? "" },
-        }));
-        // Refresh seller rating
-        fetch(`/api/reviews?seller_email=${encodeURIComponent(sellerEmail)}`)
-          .then((r) => r.ok ? r.json() : null)
-          .then((d) => { if (d) setSellerRatings((prev) => ({ ...prev, [sellerEmail]: d as SellerRating })); })
-          .catch(() => {});
-      }
-    } catch {
-      setReviewError((prev) => ({ ...prev, [orderItemId]: "Network error." }));
-    } finally {
-      setReviewLoading((prev) => ({ ...prev, [orderItemId]: false }));
-    }
-  }
-
-  function StarPicker({ itemId }: { itemId: number }) {
-    const current = reviewRating[itemId] ?? 0;
-    return (
-      <div style={{ display: "flex", gap: 4 }}>
-        {[1, 2, 3, 4, 5].map((n) => (
-          <button
-            key={n}
-            type="button"
-            onClick={() => setReviewRating((prev) => ({ ...prev, [itemId]: n }))}
-            style={{
-              background: "none", border: "none", cursor: "pointer",
-              fontSize: 26, color: n <= current ? "#f59e0b" : "#d1d5db",
-              padding: "0 1px", lineHeight: 1,
-              transition: "color 0.1s",
-            }}
-          >★</button>
-        ))}
-      </div>
-    );
-  }
-
-  function StarDisplay({ rating, count }: { rating: number | null | undefined; count?: number }) {
-    if (!rating) return null;
-    const full = Math.floor(rating);
-    const half = rating - full >= 0.5;
-    return (
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-        {[1, 2, 3, 4, 5].map((n) => (
-          <span key={n} style={{ fontSize: 13, color: n <= full ? "#f59e0b" : (n === full + 1 && half ? "#f59e0b" : "#d1d5db"), opacity: (n === full + 1 && half) ? 0.55 : 1 }}>★</span>
-        ))}
-        <span style={{ fontSize: 12, color: "#888", marginLeft: 3 }}>
-          {rating.toFixed(1)}{count !== undefined ? ` (${count})` : ""}
-        </span>
-      </span>
-    );
-  }
-
   function sellerName(email: string): string {
     const p = sellerProfiles[email];
     if (p && p.display_name && p.display_name.trim()) return p.display_name.trim();
@@ -2076,14 +1944,6 @@ export default function App() {
                           <div style={{ ...s.cardMeta, marginTop: 6 }}>
                             Seller: <strong>{sellerName(listing.seller_email)}</strong>
                           </div>
-                          {sellerRatings[listing.seller_email]?.avg_rating != null && (
-                            <div style={{ marginTop: 4 }}>
-                              <StarDisplay
-                                rating={sellerRatings[listing.seller_email].avg_rating}
-                                count={sellerRatings[listing.seller_email].review_count}
-                              />
-                            </div>
-                          )}
                         </div>
                       </div>
                     ))}
@@ -2145,14 +2005,6 @@ export default function App() {
                 <div>
                   <div style={{ fontWeight: 700, fontSize: 16 }}>{sellerName(selectedListing.seller_email)}</div>
                   <div style={{ fontSize: 12, color: "#bbb" }}>{selectedListing.seller_email}</div>
-                  {sellerRatings[selectedListing.seller_email]?.avg_rating != null && (
-                    <div style={{ marginTop: 4 }}>
-                      <StarDisplay
-                        rating={sellerRatings[selectedListing.seller_email].avg_rating}
-                        count={sellerRatings[selectedListing.seller_email].review_count}
-                      />
-                    </div>
-                  )}
                 </div>
               </div>
               <div style={{ fontSize: 12, color: "#999", marginTop: 8 }}>
@@ -2917,91 +2769,6 @@ export default function App() {
                               })()}
                             </div>
                           )}
-
-                          {/* Review section for delivered items */}
-                          {item.status === "delivered" && item.seller_email !== user.email && (
-                            <div style={{ marginTop: 10 }}>
-                              {existingReviews[item.id] != null ? (
-                                <div style={{
-                                  padding: "10px 14px", borderRadius: 8,
-                                  background: "#f0fdf4", border: "1px solid #86efac", fontSize: 13,
-                                }}>
-                                  <span style={{ fontWeight: 600, color: "#166534", marginRight: 8 }}>✓ Your review:</span>
-                                  <StarDisplay rating={existingReviews[item.id]!.rating} />
-                                  {existingReviews[item.id]!.body && (
-                                    <div style={{ marginTop: 4, color: "#444", fontStyle: "italic" }}>
-                                      &ldquo;{existingReviews[item.id]!.body}&rdquo;
-                                    </div>
-                                  )}
-                                </div>
-                              ) : reviewSuccess[item.id] ? (
-                                <div style={{
-                                  padding: "10px 14px", borderRadius: 8,
-                                  background: "#f0fdf4", border: "1px solid #86efac", fontSize: 13,
-                                  color: "#166534", fontWeight: 600,
-                                }}>✓ Review submitted! Thank you.</div>
-                              ) : !reviewOpen[item.id] ? (
-                                <button
-                                  onClick={() => setReviewOpen((prev) => ({ ...prev, [item.id]: true }))}
-                                  style={{
-                                    padding: "7px 16px", borderRadius: 7, border: "1.5px solid #f59e0b",
-                                    background: "#fffbeb", color: "#92400e", fontWeight: 600,
-                                    fontSize: 13, cursor: "pointer",
-                                  }}
-                                >⭐ Leave a review for this seller</button>
-                              ) : (
-                                <div style={{
-                                  padding: "14px 16px", borderRadius: 10,
-                                  background: "#fffbeb", border: "1.5px solid #fde68a",
-                                }}>
-                                  <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10, color: "#92400e" }}>
-                                    Rate your experience with {sellerName(item.seller_email)}
-                                  </div>
-                                  <div style={{ marginBottom: 8 }}>
-                                    <StarPicker itemId={item.id} />
-                                  </div>
-                                  <textarea
-                                    style={{
-                                      width: "100%", padding: "8px 10px", borderRadius: 7,
-                                      border: "1px solid #e0e0e0", fontSize: 13,
-                                      resize: "vertical", minHeight: 72,
-                                      boxSizing: "border-box", outline: "none",
-                                      marginBottom: 8,
-                                    }}
-                                    placeholder="Optional: describe your experience…"
-                                    value={reviewBody[item.id] ?? ""}
-                                    onChange={(e) => setReviewBody((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                                    maxLength={2000}
-                                  />
-                                  {reviewError[item.id] && (
-                                    <div style={{ color: "#b91c1c", fontSize: 12, marginBottom: 6 }}>{reviewError[item.id]}</div>
-                                  )}
-                                  <div style={{ display: "flex", gap: 8 }}>
-                                    <button
-                                      onClick={() => handleSubmitReview(item.id, item.seller_email)}
-                                      disabled={reviewLoading[item.id]}
-                                      style={{
-                                        padding: "8px 20px", borderRadius: 7, border: "none",
-                                        background: "#f59e0b", color: "#fff", fontWeight: 700,
-                                        fontSize: 13, cursor: reviewLoading[item.id] ? "default" : "pointer",
-                                        opacity: reviewLoading[item.id] ? 0.7 : 1,
-                                      }}
-                                    >
-                                      {reviewLoading[item.id] ? "Submitting…" : "Submit Review"}
-                                    </button>
-                                    <button
-                                      onClick={() => setReviewOpen((prev) => ({ ...prev, [item.id]: false }))}
-                                      style={{
-                                        padding: "8px 14px", borderRadius: 7,
-                                        border: "1px solid #ddd", background: "#fff",
-                                        color: "#888", fontSize: 13, cursor: "pointer",
-                                      }}
-                                    >Cancel</button>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          )}
                         </div>
                       ))}
                     </div>
@@ -3028,18 +2795,7 @@ export default function App() {
         {view === "mylistings" && (
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-              <div>
-                <h1 style={{ ...s.sectionTitle, marginBottom: 4 }}>My Listings</h1>
-                {sellerRatings[user.email] != null && (
-                  <div style={{ fontSize: 13, color: "#666", display: "flex", alignItems: "center", gap: 6 }}>
-                    Your seller rating:&nbsp;
-                    <StarDisplay
-                      rating={sellerRatings[user.email].avg_rating}
-                      count={sellerRatings[user.email].review_count}
-                    />
-                  </div>
-                )}
-              </div>
+              <h1 style={s.sectionTitle}>My Listings</h1>
               <button style={s.primaryBtn} onClick={() => setView("sell")}>+ New Listing</button>
             </div>
 
