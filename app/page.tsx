@@ -29,6 +29,8 @@ type Listing = {
   category_name: string;
 };
 
+type SellerProfile = { display_name: string; avatar_url: string };
+
 type CartItem = {
   listing: Listing;
   quantity: number;
@@ -69,6 +71,7 @@ export default function App() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [listings, setListings] = useState<Listing[]>([]);
   const [myListings, setMyListings] = useState<Listing[]>([]);
+  const [sellerProfiles, setSellerProfiles] = useState<Record<string, SellerProfile>>({});
 
   const [view, setView] = useState<"browse" | "sell" | "mylistings" | "watchlist" | "profile">("browse");
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
@@ -131,6 +134,22 @@ export default function App() {
   useEffect(() => {
     fetchListings(selectedCategory);
   }, [selectedCategory]);
+
+  useEffect(() => {
+    const emails = Array.from(new Set(listings.map((l) => l.seller_email)));
+    const missing = emails.filter((e) => !(e in sellerProfiles));
+    if (missing.length === 0) return;
+    missing.forEach((email) => {
+      fetch(`/api/profile?email=${encodeURIComponent(email)}`)
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => {
+          if (data && data.display_name !== undefined) {
+            setSellerProfiles((prev) => ({ ...prev, [email]: data as SellerProfile }));
+          }
+        })
+        .catch(() => {});
+    });
+  }, [listings]);
 
   useEffect(() => {
     if (view === "sell" && user) {
@@ -740,6 +759,13 @@ export default function App() {
     myListingThumb: { width: 64, height: 64, objectFit: "cover", borderRadius: 8, background: "#f0ede8", flexShrink: 0 },
   };
 
+  function sellerName(email: string): string {
+    const p = sellerProfiles[email];
+    if (p && p.display_name && p.display_name.trim()) return p.display_name.trim();
+    // Obscure the raw email for privacy: show only the part before @
+    return email.split("@")[0];
+  }
+
   function conditionColor(c: string) {
     const map: Record<string, string> = {
       new: "#dcfce7", like_new: "#d1fae5", good: "#dbeafe", fair: "#fef9c3", poor: "#fee2e2",
@@ -1107,7 +1133,7 @@ export default function App() {
                         {" · "}{listing.category_name}
                       </div>
                       <div style={{ ...s.cardMeta, marginTop: 6 }}>
-                        Seller: <strong>{listing.seller_email}</strong>
+                        Seller: <strong>{sellerName(listing.seller_email)}</strong>
                       </div>
                     </div>
                   </div>
@@ -1157,8 +1183,20 @@ export default function App() {
             )}
             <div style={{ background: "#fff", borderRadius: 12, padding: 20, marginBottom: 20 }}>
               <div style={{ fontSize: 13, color: "#888", marginBottom: 4 }}>Seller</div>
-              <div style={{ fontWeight: 700, fontSize: 16 }}>{selectedListing.seller_email}</div>
-              <div style={{ fontSize: 12, color: "#999", marginTop: 4 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                {sellerProfiles[selectedListing.seller_email]?.avatar_url && (
+                  <img
+                    src={sellerProfiles[selectedListing.seller_email].avatar_url}
+                    alt="seller avatar"
+                    style={{ width: 36, height: 36, borderRadius: "50%", objectFit: "cover", border: "2px solid #e5e5e5" }}
+                  />
+                )}
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 16 }}>{sellerName(selectedListing.seller_email)}</div>
+                  <div style={{ fontSize: 12, color: "#bbb" }}>{selectedListing.seller_email}</div>
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: "#999", marginTop: 8 }}>
                 Listed {new Date(selectedListing.created_at).toLocaleDateString()}
               </div>
             </div>
@@ -1592,7 +1630,7 @@ export default function App() {
                           {" · "}{listing.category_name}
                         </div>
                         <div style={{ ...s.cardMeta, marginTop: 6 }}>
-                          Seller: <strong>{listing.seller_email}</strong>
+                          Seller: <strong>{sellerName(listing.seller_email)}</strong>
                         </div>
                         {listing.status !== "active" && (
                           <div style={{ marginTop: 6, fontSize: 12, color: "#b91c1c", fontWeight: 600 }}>
