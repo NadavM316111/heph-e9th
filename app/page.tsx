@@ -1030,6 +1030,23 @@ export default function App() {
 
   const topCategories = categories.filter((c) => c.parent_id === null);
 
+  // Client-side filtered listings for immediate feedback
+  const filteredListings = listings.filter((l) => {
+    if (searchQ.trim()) {
+      const q = searchQ.trim().toLowerCase();
+      if (!l.title.toLowerCase().includes(q) && !l.description?.toLowerCase().includes(q)) return false;
+    }
+    if (filterCondition && l.condition !== filterCondition) return false;
+    if (filterMinPrice && !isNaN(parseFloat(filterMinPrice))) {
+      if (l.price_cents < Math.round(parseFloat(filterMinPrice) * 100)) return false;
+    }
+    if (filterMaxPrice && !isNaN(parseFloat(filterMaxPrice))) {
+      if (l.price_cents > Math.round(parseFloat(filterMaxPrice) * 100)) return false;
+    }
+    if (selectedCategory !== null && l.category_id !== selectedCategory) return false;
+    return true;
+  });
+
   // ─── Watchlist ─────────────────────────────────────────────────────────────
   const [watchedIds, setWatchedIds] = useState<Set<number>>(new Set());
   const [watchLoading, setWatchLoading] = useState(false);
@@ -1857,12 +1874,12 @@ export default function App() {
                 {/* Result count / active filters summary */}
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, minHeight: 24 }}>
                   <div style={{ fontSize: 13, color: "#888" }}>
-                    {listingsLoading ? (
-                      <span>Searching…</span>
-                    ) : (
-                      <span>
-                        <strong style={{ color: "#333" }}>{listings.length}</strong>
-                        {" result"}{listings.length !== 1 ? "s" : ""}
+                  {listingsLoading ? (
+                  <span>Searching…</span>
+                ) : (
+                  <span>
+                    <strong style={{ color: "#333" }}>{filteredListings.length}</strong>
+                    {" result"}{filteredListings.length !== 1 ? "s" : ""}
                         {(searchQ || filterCondition || filterMinPrice || filterMaxPrice || selectedCategory) && (
                           <span style={{ marginLeft: 6, color: "#bbb" }}>matching your filters</span>
                         )}
@@ -1900,7 +1917,7 @@ export default function App() {
                     <div style={{ fontSize: 36, marginBottom: 10 }}>⏳</div>
                     <div style={{ fontSize: 15 }}>Searching…</div>
                   </div>
-                ) : listings.length === 0 ? (
+                ) : filteredListings.length === 0 ? (
                   <div style={{ textAlign: "center", padding: "60px 0", color: "#999" }}>
                     <div style={{ fontSize: 48, marginBottom: 12 }}>🔍</div>
                     <div style={{ fontSize: 18, fontWeight: 600 }}>No listings found</div>
@@ -1915,7 +1932,7 @@ export default function App() {
                   </div>
                 ) : (
                   <div style={s.grid}>
-                    {listings.map((listing) => (
+                    {filteredListings.map((listing) => (
                       <div
                         key={listing.id}
                         style={s.card}
