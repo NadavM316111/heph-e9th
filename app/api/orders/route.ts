@@ -68,8 +68,8 @@ export async function GET(req: NextRequest) {
     [email, orderIds]
   );
 
-  const itemsByOrder: Record<number, typeof items> = {};
-  for (const item of items) {
+  const itemsByOrder: Record<number, typeof items.rows> = {};
+  for (const item of items.rows) {
     if (!itemsByOrder[item.order_id]) itemsByOrder[item.order_id] = [];
     itemsByOrder[item.order_id].push(item);
   }
