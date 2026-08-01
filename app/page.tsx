@@ -34,7 +34,17 @@ type Listing = {
   category_name: string;
 };
 
-type SellerProfile = { display_name: string; avatar_url: string };
+type SellerProfile = { display_name: string; avatar_url: string; avg_rating?: number; review_count?: number };
+
+type Review = {
+  id: number;
+  order_item_id: number;
+  buyer_email: string;
+  seller_email: string;
+  rating: number;
+  body: string;
+  created_at: string;
+};
 
 type CartItem = {
   listing: Listing;
@@ -184,6 +194,20 @@ export default function App() {
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [myListingsTab, setMyListingsTab] = useState<"listings" | "orders" | "messages">("listings");
 
+  // Reviews
+  const [reviewedItemIds, setReviewedItemIds] = useState<Set<number>>(new Set());
+  const [reviewOpen, setReviewOpen] = useState<Record<number, boolean>>({});
+  const [reviewRating, setReviewRating] = useState<Record<number, number>>({});
+  const [reviewBody, setReviewBody] = useState<Record<number, string>>({});
+  const [reviewLoading, setReviewLoading] = useState<Record<number, boolean>>({});
+  const [reviewError, setReviewError] = useState<Record<number, string>>({});
+  const [reviewSuccess, setReviewSuccess] = useState<Record<number, string>>({});
+
+  // Seller profile modal
+  const [sellerModalEmail, setSellerModalEmail] = useState<string | null>(null);
+  const [sellerModalReviews, setSellerModalReviews] = useState<Review[]>([]);
+  const [sellerModalLoading, setSellerModalLoading] = useState(false);
+
   // Shipping UI state (seller)
   const [shipOpen, setShipOpen] = useState<Record<number, boolean>>({});
   const [shipTracking, setShipTracking] = useState<Record<number, string>>({});
@@ -290,7 +314,21 @@ export default function App() {
         .then((r) => r.ok ? r.json() : null)
         .then((data) => {
           if (data && data.display_name !== undefined) {
-            setSellerProfiles((prev) => ({ ...prev, [email]: data as SellerProfile }));
+            // Also fetch aggregate rating for this seller
+            fetch(`/api/reviews?seller_email=${encodeURIComponent(email)}`)
+              .then((r) => r.ok ? r.json() : [])
+              .then((reviews: Review[]) => {
+                const avg = reviews.length
+                  ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length
+                  : undefined;
+                setSellerProfiles((prev) => ({
+                  ...prev,
+                  [email]: { ...(data as SellerProfile), avg_rating: avg, review_count: reviews.length },
+                }));
+              })
+              .catch(() => {
+                setSellerProfiles((prev) => ({ ...prev, [email]: data as SellerProfile }));
+              });
           }
         })
         .catch(() => {});
@@ -544,6 +582,75 @@ export default function App() {
       }
     } catch {}
     finally { setChatSending(false); }
+  }
+
+  async function fetchReviewedItems() {
+    // Build set of order_item_ids already reviewed by this user
+    // We infer from our own orders' items — check if a review exists
+    // We'll populate this lazily when orders load
+    try {
+      // Get all reviews written by the signed-in user via a seller_email wildcard isn't possible,
+      // so we query each shipped item. Instead, we store reviewed ids in state after posting.
+      // On mount, we rebuild from local knowledge — reviews are fetched per-item on demand.
+    } catch {}
+  }
+
+  async function openSellerModal(email: string) {
+    setSellerModalEmail(email);
+    setSellerModalReviews([]);
+    setSellerModalLoading(true);
+    try {
+      const res = await fetch(`/api/reviews?seller_email=${encodeURIComponent(email)}`);
+      if (res.ok) setSellerModalReviews(await res.json());
+    } catch {}
+    setSellerModalLoading(false);
+  }
+
+  async function submitReview(orderItemId: number, sellerEmail: string) {
+    const rating = reviewRating[orderItemId];
+    if (!rating) {
+      setReviewError((p) => ({ ...p, [orderItemId]: "Please select a star rating." }));
+      return;
+    }
+    setReviewLoading((p) => ({ ...p, [orderItemId]: true }));
+    setReviewError((p) => ({ ...p, [orderItemId]: "" }));
+    try {
+      const res = await fetch("/api/reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          order_item_id: orderItemId,
+          seller_email: sellerEmail,
+          rating,
+          body: reviewBody[orderItemId] || "",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setReviewError((p) => ({ ...p, [orderItemId]: data.error || "Failed to submit." }));
+      } else {
+        setReviewSuccess((p) => ({ ...p, [orderItemId]: "Review submitted! Thank you." }));
+        setReviewOpen((p) => ({ ...p, [orderItemId]: false }));
+        setReviewedItemIds((p) => new Set([...p, orderItemId]));
+        // Refresh seller profile cache for updated rating
+        fetch(`/api/reviews?seller_email=${encodeURIComponent(sellerEmail)}`)
+          .then((r) => r.ok ? r.json() : [])
+          .then((reviews: Review[]) => {
+            const avg = reviews.length
+              ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length
+              : undefined;
+            setSellerProfiles((prev) => ({
+              ...prev,
+              [sellerEmail]: { ...prev[sellerEmail], avg_rating: avg, review_count: reviews.length },
+            }));
+          })
+          .catch(() => {});
+      }
+    } catch {
+      setReviewError((p) => ({ ...p, [orderItemId]: "Network error." }));
+    } finally {
+      setReviewLoading((p) => ({ ...p, [orderItemId]: false }));
+    }
   }
 
   async function fetchSellerThreads() {
@@ -1261,6 +1368,18 @@ export default function App() {
     myListingThumb: { width: 64, height: 64, objectFit: "cover", borderRadius: 8, background: "#f0ede8", flexShrink: 0 },
   };
 
+  function renderStars(avg: number, count: number, size = 13) {
+    const full = Math.round(avg);
+    return (
+      <span style={{ fontSize: size, color: "#f59e0b", whiteSpace: "nowrap" }}>
+        {"★".repeat(full)}{"☆".repeat(5 - full)}
+        <span style={{ color: "#888", fontSize: size - 1, marginLeft: 4, fontWeight: 400 }}>
+          ({count})
+        </span>
+      </span>
+    );
+  }
+
   function sellerName(email: string): string {
     const p = sellerProfiles[email];
     if (p && p.display_name && p.display_name.trim()) return p.display_name.trim();
@@ -1962,6 +2081,13 @@ export default function App() {
                           <div style={{ ...s.cardMeta, marginTop: 6 }}>
                             Seller: <strong>{sellerName(listing.seller_email)}</strong>
                           </div>
+                          {(() => {
+                            const sp = sellerProfiles[listing.seller_email];
+                            if (sp && sp.review_count && sp.review_count > 0 && sp.avg_rating !== undefined) {
+                              return <div style={{ marginTop: 4 }}>{renderStars(sp.avg_rating, sp.review_count)}</div>;
+                            }
+                            return null;
+                          })()}
                         </div>
                       </div>
                     ))}
@@ -2023,10 +2149,28 @@ export default function App() {
                 <div>
                   <div style={{ fontWeight: 700, fontSize: 16 }}>{sellerName(selectedListing.seller_email)}</div>
                   <div style={{ fontSize: 12, color: "#bbb" }}>{selectedListing.seller_email}</div>
+                  {(() => {
+                    const sp = sellerProfiles[selectedListing.seller_email];
+                    if (sp && sp.review_count && sp.review_count > 0 && sp.avg_rating !== undefined) {
+                      return <div style={{ marginTop: 3 }}>{renderStars(sp.avg_rating, sp.review_count)}</div>;
+                    }
+                    return <div style={{ fontSize: 12, color: "#bbb", marginTop: 2 }}>No reviews yet</div>;
+                  })()}
                 </div>
               </div>
-              <div style={{ fontSize: 12, color: "#999", marginTop: 8 }}>
-                Listed {new Date(selectedListing.created_at).toLocaleDateString()}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8 }}>
+                <div style={{ fontSize: 12, color: "#999" }}>
+                  Listed {new Date(selectedListing.created_at).toLocaleDateString()}
+                </div>
+                <button
+                  style={{
+                    background: "none", border: "none", color: "#e05c2a", cursor: "pointer",
+                    fontSize: 13, fontWeight: 600, padding: 0,
+                  }}
+                  onClick={() => openSellerModal(selectedListing.seller_email)}
+                >
+                  View reviews →
+                </button>
               </div>
             </div>
 
@@ -2787,6 +2931,88 @@ export default function App() {
                               })()}
                             </div>
                           )}
+                          {/* Leave a review */}
+                          {item.status === "shipped" && !reviewedItemIds.has(item.id) && !reviewSuccess[item.id] && (
+                            <div style={{ marginTop: 10 }}>
+                              {!reviewOpen[item.id] ? (
+                                <button
+                                  style={{
+                                    padding: "6px 14px", borderRadius: 7, border: "1.5px solid #e05c2a",
+                                    background: "#fff4ec", color: "#e05c2a", fontWeight: 600,
+                                    fontSize: 13, cursor: "pointer",
+                                  }}
+                                  onClick={() => setReviewOpen((p) => ({ ...p, [item.id]: true }))}
+                                >
+                                  ⭐ Leave a Review
+                                </button>
+                              ) : (
+                                <div style={{
+                                  marginTop: 4, padding: "14px 16px", borderRadius: 10,
+                                  background: "#fdfaf6", border: "1.5px solid #f5cdb8",
+                                }}>
+                                  <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>Rate your purchase</div>
+                                  <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                                    {[1, 2, 3, 4, 5].map((star) => (
+                                      <button
+                                        key={star}
+                                        type="button"
+                                        onClick={() => setReviewRating((p) => ({ ...p, [item.id]: star }))}
+                                        style={{
+                                          fontSize: 26, background: "none", border: "none",
+                                          cursor: "pointer", padding: 0, lineHeight: 1,
+                                          color: (reviewRating[item.id] || 0) >= star ? "#f59e0b" : "#ddd",
+                                          transition: "color 0.1s",
+                                        }}
+                                      >★</button>
+                                    ))}
+                                  </div>
+                                  <textarea
+                                    style={{
+                                      width: "100%", padding: "8px 10px", borderRadius: 7,
+                                      border: "1px solid #ddd", fontSize: 13, boxSizing: "border-box",
+                                      outline: "none", resize: "vertical", minHeight: 70,
+                                      marginBottom: 8,
+                                    }}
+                                    placeholder="Share your experience (optional)…"
+                                    value={reviewBody[item.id] || ""}
+                                    onChange={(e) => setReviewBody((p) => ({ ...p, [item.id]: e.target.value }))}
+                                  />
+                                  {reviewError[item.id] && (
+                                    <div style={{ color: "#b91c1c", fontSize: 12, marginBottom: 6 }}>{reviewError[item.id]}</div>
+                                  )}
+                                  <div style={{ display: "flex", gap: 8 }}>
+                                    <button
+                                      style={{
+                                        padding: "7px 18px", borderRadius: 7, border: "none",
+                                        background: "#e05c2a", color: "#fff", fontWeight: 600,
+                                        fontSize: 13, cursor: reviewLoading[item.id] ? "default" : "pointer",
+                                        opacity: reviewLoading[item.id] ? 0.7 : 1,
+                                      }}
+                                      disabled={reviewLoading[item.id]}
+                                      onClick={() => submitReview(item.id, item.seller_email)}
+                                    >
+                                      {reviewLoading[item.id] ? "Submitting…" : "Submit Review"}
+                                    </button>
+                                    <button
+                                      style={{
+                                        padding: "7px 12px", borderRadius: 7,
+                                        border: "1px solid #ddd", background: "#fff",
+                                        color: "#888", fontSize: 13, cursor: "pointer",
+                                      }}
+                                      onClick={() => setReviewOpen((p) => ({ ...p, [item.id]: false }))}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {reviewSuccess[item.id] && (
+                            <div style={{ marginTop: 8, fontSize: 13, color: "#15803d", fontWeight: 600 }}>
+                              {reviewSuccess[item.id]}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -3167,7 +3393,86 @@ export default function App() {
         )}
       </div>
 
+      {/* ── Seller Profile Modal ── */}
+      {sellerModalEmail && (
+        <div
+          style={s.modal}
+          onClick={(e) => { if (e.target === e.currentTarget) setSellerModalEmail(null); }}
+        >
+          <div style={{ ...s.modalBox, maxWidth: 520 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <div style={{ fontSize: 20, fontWeight: 700 }}>
+                {sellerName(sellerModalEmail)}&apos;s Reviews
+              </div>
+              <button
+                onClick={() => setSellerModalEmail(null)}
+                style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer", color: "#888", lineHeight: 1 }}
+              >×</button>
+            </div>
 
+            {/* Aggregate */}
+            {(() => {
+              const sp = sellerProfiles[sellerModalEmail];
+              if (sp && sp.review_count && sp.review_count > 0 && sp.avg_rating !== undefined) {
+                return (
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 16, marginBottom: 20,
+                    padding: "14px 18px", background: "#fdfaf6", borderRadius: 12,
+                    border: "1px solid #f5cdb8",
+                  }}>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 40, fontWeight: 800, color: "#e05c2a", lineHeight: 1 }}>
+                        {sp.avg_rating.toFixed(1)}
+                      </div>
+                      <div style={{ fontSize: 22, color: "#f59e0b", marginTop: 2 }}>
+                        {"★".repeat(Math.round(sp.avg_rating))}{"☆".repeat(5 - Math.round(sp.avg_rating))}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 14, color: "#555" }}>
+                      Based on <strong>{sp.review_count}</strong> review{sp.review_count !== 1 ? "s" : ""}
+                    </div>
+                  </div>
+                );
+              }
+              return null;
+            })()}
+
+            {sellerModalLoading ? (
+              <div style={{ textAlign: "center", padding: "32px 0", color: "#bbb" }}>Loading reviews…</div>
+            ) : sellerModalReviews.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "32px 0", color: "#999" }}>
+                <div style={{ fontSize: 36, marginBottom: 8 }}>⭐</div>
+                <div style={{ fontWeight: 600 }}>No reviews yet</div>
+                <div style={{ fontSize: 13, marginTop: 4 }}>Be the first to leave a review after purchasing.</div>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                {sellerModalReviews.map((review) => (
+                  <div key={review.id} style={{
+                    padding: "14px 16px", borderRadius: 10,
+                    background: "#fafafa", border: "1px solid #f0f0f0",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                      <span style={{ fontSize: 18, color: "#f59e0b" }}>
+                        {"★".repeat(review.rating)}{"☆".repeat(5 - review.rating)}
+                      </span>
+                      <span style={{ fontSize: 12, color: "#bbb" }}>
+                        {new Date(review.created_at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
+                      </span>
+                    </div>
+                    {review.body && (
+                      <div style={{ fontSize: 14, color: "#333", lineHeight: 1.55 }}>{review.body}</div>
+                    )}
+                    <div style={{ fontSize: 12, color: "#aaa", marginTop: 6 }}>
+                      by {review.buyer_email.split("@")[0]}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
