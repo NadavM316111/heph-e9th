@@ -2,6 +2,11 @@
 
 import { useEffect, useState, useRef } from "react";
 
+// ─── Email Verification ────────────────────────────────────────────────────
+// After signup the server returns { needsVerification: true, verifyToken }
+// (token shown in-UI in dev mode since no email service is configured).
+// The user must enter the 6-digit code before the main app is shown.
+
 const CONDITIONS = [
   { value: "new", label: "New" },
   { value: "like_new", label: "Like New" },
@@ -46,6 +51,15 @@ export default function App() {
   const [authRole, setAuthRole] = useState<"buyer" | "seller">("buyer");
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+
+  // Email verification
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const [verifyEmail, setVerifyEmail] = useState("");
+  const [verifyDevToken, setVerifyDevToken] = useState(""); // shown in dev mode
+  const [verifyInput, setVerifyInput] = useState("");
+  const [verifyError, setVerifyError] = useState("");
+  const [verifyLoading, setVerifyLoading] = useState(false);
+  const [verifyResent, setVerifyResent] = useState(false);
 
   // Forgot-password flow
   const [forgotOpen, setForgotOpen] = useState(false);
@@ -294,14 +308,84 @@ export default function App() {
               role: authRole,
             }),
           });
+          // Trigger email verification
+          const vRes = await fetch("/api/verify-email", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: "send", email: authEmail }),
+          });
+          const vData = await vRes.json();
+          setVerifyEmail(authEmail);
+          setVerifyDevToken(vData.token || "");
+          setVerifyInput("");
+          setVerifyError("");
+          setVerifyResent(false);
+          setVerifyOpen(true);
+        } else {
+          // Login — check if verified
+          if (data.needsVerification) {
+            const vRes = await fetch("/api/verify-email", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ mode: "send", email: authEmail }),
+            });
+            const vData = await vRes.json();
+            setVerifyEmail(authEmail);
+            setVerifyDevToken(vData.token || "");
+            setVerifyInput("");
+            setVerifyError("");
+            setVerifyResent(false);
+            setVerifyOpen(true);
+          } else {
+            setUser({ email: authEmail });
+          }
         }
-        setUser({ email: authEmail });
       }
     } catch {
       setAuthError("Network error");
     } finally {
       setAuthLoading(false);
     }
+  }
+
+  async function handleVerify(e: React.FormEvent) {
+    e.preventDefault();
+    setVerifyError("");
+    setVerifyLoading(true);
+    try {
+      const res = await fetch("/api/verify-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "verify", email: verifyEmail, token: verifyInput.trim().toUpperCase() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setVerifyError(data.error || "Invalid code. Please try again.");
+      } else {
+        setVerifyOpen(false);
+        setUser({ email: verifyEmail });
+      }
+    } catch {
+      setVerifyError("Network error.");
+    } finally {
+      setVerifyLoading(false);
+    }
+  }
+
+  async function handleResendVerify() {
+    setVerifyResent(false);
+    setVerifyError("");
+    try {
+      const vRes = await fetch("/api/verify-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "send", email: verifyEmail }),
+      });
+      const vData = await vRes.json();
+      setVerifyDevToken(vData.token || "");
+      setVerifyResent(true);
+      setTimeout(() => setVerifyResent(false), 3000);
+    } catch {}
   }
 
   async function handleLogout() {
@@ -779,6 +863,88 @@ export default function App() {
 
   function formatPrice(cents: number) {
     return "$" + (cents / 100).toFixed(2);
+  }
+
+  // ─── Email Verification Gate ───────────────────────────────────────────────
+  if (verifyOpen) {
+    return (
+      <div style={s.root}>
+        <div style={s.header}>
+          <span style={s.logo} className="bazaar-logo">Bazaar</span>
+        </div>
+        <div style={s.authCard}>
+          <div style={{ textAlign: "center", fontSize: 40, marginBottom: 12 }}>📬</div>
+          <div style={{ ...s.authTitle as React.CSSProperties, marginBottom: 8 }}>Verify your email</div>
+          <p style={{ fontSize: 14, color: "#666", textAlign: "center", lineHeight: 1.6, marginBottom: 20 }}>
+            Enter the 6-digit code for <strong>{verifyEmail}</strong>.
+          </p>
+
+          {/* Dev-mode token display */}
+          {verifyDevToken && (
+            <div style={{
+              background: "#fef9c3", border: "1px solid #fde68a",
+              borderRadius: 10, padding: "12px 16px", marginBottom: 20, textAlign: "center",
+            }}>
+              <div style={{
+                display: "inline-block", background: "#fff4ec", border: "1px solid #f5c87c",
+                borderRadius: 6, padding: "3px 10px", fontSize: 11, color: "#92400e",
+                fontWeight: 600, marginBottom: 8,
+              }}>
+                ⚠️ Dev mode — no email service configured. Code shown here instead.
+              </div>
+              <div style={{ fontSize: 12, color: "#555", marginBottom: 4 }}>Your verification code (copy this):</div>
+              <div style={{ fontSize: 30, fontWeight: 800, letterSpacing: 8, color: "#166534", fontFamily: "monospace" }}>
+                {verifyDevToken}
+              </div>
+              <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Valid for 30 minutes</div>
+            </div>
+          )}
+
+          <form onSubmit={handleVerify}>
+            <label style={s.label}>Verification Code *</label>
+            <input
+              style={{ ...s.input, fontFamily: "monospace", letterSpacing: 6, fontSize: 22, textAlign: "center", textTransform: "uppercase" }}
+              type="text"
+              required
+              maxLength={6}
+              value={verifyInput}
+              onChange={(e) => setVerifyInput(e.target.value.toUpperCase())}
+              placeholder="XXXXXX"
+              autoFocus
+            />
+            {verifyError && <div style={s.error}>{verifyError}</div>}
+            {verifyResent && <div style={s.success}>New code generated above!</div>}
+            <button
+              style={{ ...s.primaryBtn, width: "100%", padding: "12px 0", fontSize: 15 }}
+              disabled={verifyLoading}
+            >
+              {verifyLoading ? "Verifying…" : "Verify Email →"}
+            </button>
+          </form>
+
+          <div style={{ textAlign: "center", marginTop: 16 }}>
+            <span style={{ fontSize: 13, color: "#888" }}>Didn&apos;t get a code? </span>
+            <button
+              type="button"
+              style={{ background: "none", border: "none", color: "#e05c2a", cursor: "pointer", fontWeight: 600, fontSize: 13, padding: 0 }}
+              onClick={handleResendVerify}
+            >
+              Resend code
+            </button>
+          </div>
+
+          <div style={{ textAlign: "center", marginTop: 12 }}>
+            <button
+              type="button"
+              style={{ background: "none", border: "none", color: "#aaa", cursor: "pointer", fontSize: 12 }}
+              onClick={() => { setVerifyOpen(false); setAuthPassword(""); }}
+            >
+              ← Back to sign in
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   // ─── Auth Page ─────────────────────────────────────────────────────────────
