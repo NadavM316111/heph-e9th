@@ -41,6 +41,50 @@ type CartItem = {
   quantity: number;
 };
 
+type ShippingAddress = {
+  name: string;
+  line1: string;
+  line2: string;
+  city: string;
+  state: string;
+  zip: string;
+  country: string;
+};
+
+type OrderItem = {
+  order_id: number;
+  listing_id: number;
+  seller_email: string;
+  quantity: number;
+  unit_price_cents: number;
+  title_snapshot: string;
+  status: string;
+};
+
+type Order = {
+  id: number;
+  status: string;
+  total_cents: number;
+  shipping_address: ShippingAddress;
+  stripe_session_id: string;
+  created_at: string;
+  items: OrderItem[];
+};
+
+type SellerOrderItem = {
+  id: number;
+  order_id: number;
+  listing_id: number;
+  buyer_email: string;
+  quantity: number;
+  unit_price_cents: number;
+  title_snapshot: string;
+  status: string;
+  created_at: string;
+  shipping_address: ShippingAddress;
+  stripe_session_id: string;
+};
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
@@ -87,7 +131,7 @@ export default function App() {
   const [myListings, setMyListings] = useState<Listing[]>([]);
   const [sellerProfiles, setSellerProfiles] = useState<Record<string, SellerProfile>>({});
 
-  const [view, setView] = useState<"browse" | "sell" | "mylistings" | "watchlist" | "profile">("browse");
+  const [view, setView] = useState<"browse" | "sell" | "mylistings" | "watchlist" | "profile" | "purchases">("browse");
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
   const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
 
@@ -97,6 +141,18 @@ export default function App() {
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutError, setCheckoutError] = useState("");
   const [addedToCart, setAddedToCart] = useState(false);
+
+  // Shipping address modal
+  const [shippingOpen, setShippingOpen] = useState(false);
+  const [shippingAddress, setShippingAddress] = useState<ShippingAddress>({
+    name: "", line1: "", line2: "", city: "", state: "", zip: "", country: "US",
+  });
+
+  // Purchases / seller orders
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [sellerOrders, setSellerOrders] = useState<SellerOrderItem[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [myListingsTab, setMyListingsTab] = useState<"listings" | "orders">("listings");
 
   // New listing form
   const [formTitle, setFormTitle] = useState("");
@@ -127,6 +183,12 @@ export default function App() {
       // Switch to sell view so user sees their updated status
       setView("sell");
     }
+    // After successful checkout, mark order paid and show purchases
+    const checkoutParam = params.get("checkout");
+    const orderParam = params.get("order");
+    if (checkoutParam === "success" && orderParam) {
+      window.history.replaceState({}, "", window.location.pathname);
+    }
   }, []);
 
   useEffect(() => {
@@ -134,13 +196,28 @@ export default function App() {
       fetchSellerStatus();
       fetchMyListings();
       fetchProfile();
+      fetchOrders();
+      fetchSellerOrders();
 
       // Re-check seller status if returning from Stripe
       const params = new URLSearchParams(window.location.search);
       const sellerParam = params.get("seller");
       if (sellerParam === "done" || sellerParam === "retry") {
-        // fetchSellerStatus already called above; just ensure view is sell
         setView("sell");
+      }
+      const checkoutParam = params.get("checkout");
+      const orderParam = params.get("order");
+      if (checkoutParam === "success" && orderParam) {
+        // Mark the order paid then show purchases
+        fetch("/api/orders", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ stripe_session_id: orderParam }),
+        }).then(() => {
+          fetchOrders();
+          setCart([]);
+          setView("purchases");
+        });
       }
     }
   }, [user]);
@@ -166,9 +243,10 @@ export default function App() {
   }, [listings]);
 
   useEffect(() => {
-    if (view === "sell" && user) {
-      fetchSellerStatus();
-    }
+    if (!user) return;
+    if (view === "sell") fetchSellerStatus();
+    if (view === "purchases") fetchOrders();
+    if (view === "mylistings") { fetchMyListings(); fetchSellerOrders(); }
   }, [view]);
 
   async function checkAuth() {
@@ -258,6 +336,20 @@ export default function App() {
         const data = await res.json();
         setListings(data);
       }
+    } catch {}
+  }
+
+  async function fetchOrders() {
+    try {
+      const res = await fetch("/api/orders");
+      if (res.ok) setOrders(await res.json());
+    } catch {}
+  }
+
+  async function fetchSellerOrders() {
+    try {
+      const res = await fetch("/api/orders?role=seller");
+      if (res.ok) setSellerOrders(await res.json());
     } catch {}
   }
 
@@ -598,30 +690,63 @@ export default function App() {
     return cart.reduce((sum, i) => sum + i.listing.price_cents * i.quantity, 0);
   }
 
+  function openShippingModal() {
+    setShippingAddress((prev) => ({
+      ...prev,
+      name: prev.name || profile.display_name || "",
+    }));
+    setCheckoutError("");
+    setShippingOpen(true);
+  }
+
   async function handleCheckout() {
+    // Validate address
+    if (!shippingAddress.name.trim() || !shippingAddress.line1.trim() ||
+        !shippingAddress.city.trim() || !shippingAddress.state.trim() ||
+        !shippingAddress.zip.trim()) {
+      setCheckoutError("Please fill in all required address fields.");
+      return;
+    }
     setCheckoutError("");
     setCheckoutLoading(true);
     try {
-      const items = cart.map((i) => ({
+      const stripeItems = cart.map((i) => ({
         name: i.listing.title,
         amount_cents: i.listing.price_cents,
         quantity: i.quantity,
         seller_email: i.listing.seller_email,
       }));
-      const res = await fetch("/api/marketplace/checkout", {
+      const stripeRes = await fetch("/api/marketplace/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items }),
+        body: JSON.stringify({ items: stripeItems }),
       });
-      const data = await res.json();
-      if (!res.ok || !data.url) {
-        setCheckoutError(data.error || "Checkout failed. Please try again.");
-      } else {
-        window.location.href = data.url;
+      const stripeData = await stripeRes.json();
+      if (!stripeRes.ok || !stripeData.url) {
+        setCheckoutError(stripeData.error || "Checkout failed. Please try again.");
+        setCheckoutLoading(false);
+        return;
       }
+      // Save order to DB before redirecting
+      const orderItems = cart.map((i) => ({
+        listing_id: i.listing.id,
+        seller_email: i.listing.seller_email,
+        quantity: i.quantity,
+        unit_price_cents: i.listing.price_cents,
+        title_snapshot: i.listing.title,
+      }));
+      await fetch("/api/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shipping_address: shippingAddress,
+          items: orderItems,
+          stripe_session_id: stripeData.sessionId,
+        }),
+      });
+      window.location.href = stripeData.url;
     } catch {
       setCheckoutError("Network error. Please try again.");
-    } finally {
       setCheckoutLoading(false);
     }
   }
@@ -1226,6 +1351,9 @@ export default function App() {
           <button style={view === "watchlist" ? s.navBtnActive : s.navBtn} onClick={() => setView("watchlist")}>
             Watchlist{watchedIds.size > 0 ? ` (${watchedIds.size})` : ""}
           </button>
+          <button style={view === "purchases" ? s.navBtnActive : s.navBtn} onClick={() => setView("purchases")}>
+            Purchases{orders.length > 0 ? ` (${orders.length})` : ""}
+          </button>
           <button style={view === "profile" ? s.navBtnActive : s.navBtn} onClick={() => setView("profile")}>
             Profile
           </button>
@@ -1471,15 +1599,123 @@ export default function App() {
                     </div>
                     <button
                       style={{ ...s.primaryBtn, padding: "14px 28px", fontSize: 16 }}
-                      onClick={handleCheckout}
+                      onClick={() => { setCartOpen(false); openShippingModal(); }}
                       disabled={checkoutLoading}
                     >
-                      {checkoutLoading ? "Redirecting…" : "Checkout →"}
+                      Checkout →
                     </button>
                   </div>
                   {checkoutError && <div style={{ ...s.error, marginTop: 10 }}>{checkoutError}</div>}
                 </>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* ── Shipping Address Modal ── */}
+        {shippingOpen && (
+          <div style={s.modal} onClick={(e) => { if (e.target === e.currentTarget) setShippingOpen(false); }}>
+            <div style={{ ...s.modalBox, maxWidth: 480 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                <div style={{ fontSize: 20, fontWeight: 700 }}>📦 Shipping Address</div>
+                <button
+                  onClick={() => setShippingOpen(false)}
+                  style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#888", lineHeight: 1 }}
+                >×</button>
+              </div>
+              <p style={{ fontSize: 13, color: "#666", marginBottom: 20, lineHeight: 1.5 }}>
+                Enter the address where your items should be shipped. Sellers will see this to fulfill your order.
+              </p>
+
+              <label style={s.label}>Full Name *</label>
+              <input
+                style={s.input}
+                value={shippingAddress.name}
+                onChange={(e) => setShippingAddress((a) => ({ ...a, name: e.target.value }))}
+                placeholder="Jane Smith"
+              />
+
+              <label style={s.label}>Address Line 1 *</label>
+              <input
+                style={s.input}
+                value={shippingAddress.line1}
+                onChange={(e) => setShippingAddress((a) => ({ ...a, line1: e.target.value }))}
+                placeholder="123 Main St"
+              />
+
+              <label style={s.label}>Address Line 2</label>
+              <input
+                style={s.input}
+                value={shippingAddress.line2}
+                onChange={(e) => setShippingAddress((a) => ({ ...a, line2: e.target.value }))}
+                placeholder="Apt 4B (optional)"
+              />
+
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 10 }}>
+                <div>
+                  <label style={s.label}>City *</label>
+                  <input
+                    style={s.input}
+                    value={shippingAddress.city}
+                    onChange={(e) => setShippingAddress((a) => ({ ...a, city: e.target.value }))}
+                    placeholder="New York"
+                  />
+                </div>
+                <div>
+                  <label style={s.label}>State *</label>
+                  <input
+                    style={s.input}
+                    value={shippingAddress.state}
+                    onChange={(e) => setShippingAddress((a) => ({ ...a, state: e.target.value }))}
+                    placeholder="NY"
+                    maxLength={2}
+                  />
+                </div>
+                <div>
+                  <label style={s.label}>ZIP *</label>
+                  <input
+                    style={s.input}
+                    value={shippingAddress.zip}
+                    onChange={(e) => setShippingAddress((a) => ({ ...a, zip: e.target.value }))}
+                    placeholder="10001"
+                    maxLength={10}
+                  />
+                </div>
+              </div>
+
+              <label style={s.label}>Country</label>
+              <select
+                style={s.select}
+                value={shippingAddress.country}
+                onChange={(e) => setShippingAddress((a) => ({ ...a, country: e.target.value }))}
+              >
+                <option value="US">United States</option>
+                <option value="CA">Canada</option>
+                <option value="GB">United Kingdom</option>
+                <option value="AU">Australia</option>
+                <option value="DE">Germany</option>
+                <option value="FR">France</option>
+                <option value="JP">Japan</option>
+                <option value="Other">Other</option>
+              </select>
+
+              {checkoutError && <div style={s.error}>{checkoutError}</div>}
+
+              <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+                <button
+                  style={s.secondaryBtn}
+                  onClick={() => { setShippingOpen(false); setCartOpen(true); }}
+                >
+                  ← Back to cart
+                </button>
+                <button
+                  style={{ ...s.primaryBtn, flex: 1, padding: "12px 0", fontSize: 15 }}
+                  onClick={handleCheckout}
+                  disabled={checkoutLoading}
+                >
+                  {checkoutLoading ? "Redirecting to payment…" : "Continue to Payment →"}
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -1829,62 +2065,227 @@ export default function App() {
           </>
         )}
 
+        {/* ── Purchases ── */}
+        {view === "purchases" && (
+          <>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+              <h1 style={s.sectionTitle}>Your Purchases</h1>
+              {ordersLoading && <span style={{ fontSize: 13, color: "#888" }}>Loading…</span>}
+            </div>
+
+            {orders.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "60px 0", color: "#999" }}>
+                <div style={{ fontSize: 48, marginBottom: 12 }}>🛍️</div>
+                <div style={{ fontSize: 18, fontWeight: 600 }}>No purchases yet</div>
+                <div style={{ fontSize: 14, marginTop: 4, marginBottom: 20 }}>
+                  When you buy something it will appear here.
+                </div>
+                <button style={s.primaryBtn} onClick={() => setView("browse")}>Browse listings</button>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                {orders.map((order) => (
+                  <div key={order.id} style={{ background: "#fff", borderRadius: 14, boxShadow: "0 1px 6px rgba(0,0,0,0.07)", overflow: "hidden" }}>
+                    {/* Order header */}
+                    <div style={{ background: "#f9f9f9", borderBottom: "1px solid #f0f0f0", padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                      <div>
+                        <span style={{ fontWeight: 700, fontSize: 15 }}>Order #{order.id}</span>
+                        <span style={{ marginLeft: 12, fontSize: 12, color: "#888" }}>
+                          {new Date(order.created_at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <span style={{ fontWeight: 700, color: "#e05c2a", fontSize: 16 }}>{formatPrice(order.total_cents)}</span>
+                        <span style={{
+                          ...s.badge,
+                          background: order.status === "paid" ? "#dcfce7" : order.status === "pending" ? "#fef9c3" : "#fee2e2",
+                          color: order.status === "paid" ? "#166534" : order.status === "pending" ? "#92400e" : "#b91c1c",
+                          fontSize: 12, padding: "3px 10px",
+                        }}>
+                          {order.status === "paid" ? "✓ Paid" : order.status}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Items */}
+                    <div style={{ padding: "0 20px" }}>
+                      {order.items.map((item, idx) => (
+                        <div key={idx} style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 0", borderBottom: idx < order.items.length - 1 ? "1px solid #f5f5f5" : "none" }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 2 }}>{item.title_snapshot}</div>
+                            <div style={{ fontSize: 12, color: "#888" }}>
+                              Seller: {item.seller_email.split("@")[0]} · Qty: {item.quantity}
+                            </div>
+                          </div>
+                          <div style={{ fontWeight: 700, fontSize: 14, color: "#333", flexShrink: 0 }}>
+                            {formatPrice(item.unit_price_cents * item.quantity)}
+                          </div>
+                          <span style={{
+                            ...s.badge,
+                            background: "#e8f0fe", color: "#1a56db",
+                            fontSize: 11, flexShrink: 0,
+                          }}>
+                            {item.status}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Shipping address */}
+                    {order.shipping_address && order.shipping_address.line1 && (
+                      <div style={{ background: "#fef9f0", borderTop: "1px solid #f5e8d0", padding: "12px 20px", fontSize: 13, color: "#555" }}>
+                        <span style={{ fontWeight: 600, color: "#92400e", marginRight: 8 }}>📦 Ships to:</span>
+                        {order.shipping_address.name && <span>{order.shipping_address.name}, </span>}
+                        {order.shipping_address.line1}
+                        {order.shipping_address.line2 && `, ${order.shipping_address.line2}`}
+                        , {order.shipping_address.city}, {order.shipping_address.state} {order.shipping_address.zip}
+                        {order.shipping_address.country && order.shipping_address.country !== "US" && `, ${order.shipping_address.country}`}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
         {/* ── My Listings ── */}
         {view === "mylistings" && (
           <>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
               <h1 style={s.sectionTitle}>My Listings</h1>
               <button style={s.primaryBtn} onClick={() => setView("sell")}>+ New Listing</button>
             </div>
 
-            {myListings.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "60px 0", color: "#999" }}>
-                <div style={{ fontSize: 48, marginBottom: 12 }}>📋</div>
-                <div style={{ fontSize: 18, fontWeight: 600 }}>No listings yet</div>
-                <div style={{ fontSize: 14, marginTop: 4 }}>
-                  <button style={{ ...s.primaryBtn, marginTop: 12 }} onClick={() => setView("sell")}>
-                    Create your first listing
-                  </button>
-                </div>
-              </div>
-            ) : (
-              myListings.map((listing) => (
-                <div key={listing.id} style={s.myListingRow}>
-                  {listing.photos && listing.photos[0]
-                    ? <img src={listing.photos[0]} alt={listing.title} style={s.myListingThumb as React.CSSProperties} />
-                    : <div style={{ ...s.myListingThumb, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24 }}>📦</div>
-                  }
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {listing.title}
-                    </div>
-                    <div style={{ fontSize: 13, color: "#888" }}>
-                      {formatPrice(listing.price_cents)} · {conditionLabel(listing.condition)} · {listing.category_name}
-                    </div>
-                    <div style={{ marginTop: 4 }}>
-                      <span style={{
-                        ...s.badge,
-                        background: listing.status === "active" ? "#dcfce7" : listing.status === "paused" ? "#fef9c3" : "#fee2e2",
-                        color: listing.status === "active" ? "#166534" : listing.status === "paused" ? "#92400e" : "#b91c1c",
-                      }}>
-                        {listing.status}
-                      </span>
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-                    {listing.status !== "removed" && (
-                      <>
-                        <button style={s.warnBtn} onClick={() => handlePauseResume(listing)}>
-                          {listing.status === "active" ? "Pause" : "Resume"}
-                        </button>
-                        <button style={s.dangerBtn} onClick={() => handleRemoveListing(listing)}>
-                          Remove
-                        </button>
-                      </>
-                    )}
+            {/* Sub-tabs */}
+            <div style={{ display: "flex", gap: 4, marginBottom: 24, borderBottom: "2px solid #f0f0f0", paddingBottom: 0 }}>
+              {(["listings", "orders"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setMyListingsTab(tab)}
+                  style={{
+                    padding: "8px 20px", border: "none", cursor: "pointer",
+                    fontSize: 14, fontWeight: myListingsTab === tab ? 700 : 500,
+                    background: "transparent",
+                    color: myListingsTab === tab ? "#e05c2a" : "#888",
+                    borderBottom: myListingsTab === tab ? "2px solid #e05c2a" : "2px solid transparent",
+                    marginBottom: -2,
+                  }}
+                >
+                  {tab === "listings" ? `My Items (${myListings.length})` : `Incoming Orders (${sellerOrders.length})`}
+                </button>
+              ))}
+            </div>
+
+            {myListingsTab === "listings" && (
+              myListings.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "60px 0", color: "#999" }}>
+                  <div style={{ fontSize: 48, marginBottom: 12 }}>📋</div>
+                  <div style={{ fontSize: 18, fontWeight: 600 }}>No listings yet</div>
+                  <div style={{ fontSize: 14, marginTop: 4 }}>
+                    <button style={{ ...s.primaryBtn, marginTop: 12 }} onClick={() => setView("sell")}>
+                      Create your first listing
+                    </button>
                   </div>
                 </div>
-              ))
+              ) : (
+                myListings.map((listing) => (
+                  <div key={listing.id} style={s.myListingRow}>
+                    {listing.photos && listing.photos[0]
+                      ? <img src={listing.photos[0]} alt={listing.title} style={s.myListingThumb as React.CSSProperties} />
+                      : <div style={{ ...s.myListingThumb, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24 }}>📦</div>
+                    }
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {listing.title}
+                      </div>
+                      <div style={{ fontSize: 13, color: "#888" }}>
+                        {formatPrice(listing.price_cents)} · {conditionLabel(listing.condition)} · {listing.category_name}
+                      </div>
+                      <div style={{ marginTop: 4 }}>
+                        <span style={{
+                          ...s.badge,
+                          background: listing.status === "active" ? "#dcfce7" : listing.status === "paused" ? "#fef9c3" : "#fee2e2",
+                          color: listing.status === "active" ? "#166534" : listing.status === "paused" ? "#92400e" : "#b91c1c",
+                        }}>
+                          {listing.status}
+                        </span>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                      {listing.status !== "removed" && (
+                        <>
+                          <button style={s.warnBtn} onClick={() => handlePauseResume(listing)}>
+                            {listing.status === "active" ? "Pause" : "Resume"}
+                          </button>
+                          <button style={s.dangerBtn} onClick={() => handleRemoveListing(listing)}>
+                            Remove
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )
+            )}
+
+            {myListingsTab === "orders" && (
+              sellerOrders.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "60px 0", color: "#999" }}>
+                  <div style={{ fontSize: 48, marginBottom: 12 }}>📬</div>
+                  <div style={{ fontSize: 18, fontWeight: 600 }}>No orders yet</div>
+                  <div style={{ fontSize: 14, marginTop: 4 }}>When buyers purchase your items, orders appear here.</div>
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                  {sellerOrders.map((item) => (
+                    <div key={item.id} style={{ background: "#fff", borderRadius: 12, boxShadow: "0 1px 4px rgba(0,0,0,0.07)", overflow: "hidden" }}>
+                      <div style={{ padding: "14px 18px", borderBottom: "1px solid #f5f5f5", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                        <div>
+                          <span style={{ fontWeight: 700, fontSize: 15 }}>{item.title_snapshot}</span>
+                          <span style={{ marginLeft: 10, fontSize: 12, color: "#888" }}>
+                            {new Date(item.created_at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
+                          </span>
+                        </div>
+                        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                          <span style={{ fontWeight: 700, color: "#e05c2a" }}>
+                            {formatPrice(item.unit_price_cents * item.quantity)}
+                          </span>
+                          <span style={{ fontSize: 12, color: "#888" }}>× {item.quantity}</span>
+                          <span style={{ ...s.badge, background: "#dcfce7", color: "#166534", fontSize: 11 }}>
+                            {item.status}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Buyer shipping address */}
+                      {item.shipping_address && item.shipping_address.line1 ? (
+                        <div style={{ padding: "12px 18px", background: "#f9fffe", fontSize: 13 }}>
+                          <div style={{ fontWeight: 600, color: "#0e7490", marginBottom: 6, fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                            📦 Ship to buyer
+                          </div>
+                          <div style={{ fontWeight: 600, marginBottom: 2 }}>{item.shipping_address.name}</div>
+                          <div style={{ color: "#444" }}>
+                            {item.shipping_address.line1}
+                            {item.shipping_address.line2 && <>, {item.shipping_address.line2}</>}
+                          </div>
+                          <div style={{ color: "#444" }}>
+                            {item.shipping_address.city}, {item.shipping_address.state} {item.shipping_address.zip}
+                            {item.shipping_address.country && item.shipping_address.country !== "US" && `, ${item.shipping_address.country}`}
+                          </div>
+                          <div style={{ marginTop: 6, fontSize: 12, color: "#888" }}>
+                            Buyer: {item.buyer_email}
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ padding: "12px 18px", fontSize: 13, color: "#aaa" }}>
+                          No shipping address provided · Buyer: {item.buyer_email}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )
             )}
           </>
         )}
