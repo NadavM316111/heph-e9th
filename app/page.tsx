@@ -34,6 +34,9 @@ export default function App() {
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
+  const [authPasswordConfirm, setAuthPasswordConfirm] = useState("");
+  const [authDisplayName, setAuthDisplayName] = useState("");
+  const [authRole, setAuthRole] = useState<"buyer" | "seller">("buyer");
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
 
@@ -190,6 +193,18 @@ export default function App() {
   async function handleAuth(e: React.FormEvent) {
     e.preventDefault();
     setAuthError("");
+
+    if (authMode === "signup") {
+      if (!authDisplayName.trim()) {
+        setAuthError("Please enter your name.");
+        return;
+      }
+      if (authPassword !== authPasswordConfirm) {
+        setAuthError("Passwords do not match.");
+        return;
+      }
+    }
+
     setAuthLoading(true);
     try {
       const res = await fetch("/api/auth", {
@@ -201,6 +216,18 @@ export default function App() {
       if (!res.ok) {
         setAuthError(data.error || "Something went wrong");
       } else {
+        if (authMode === "signup") {
+          // Save display name and role right after account creation
+          await fetch("/api/profile", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              display_name: authDisplayName.trim(),
+              avatar_url: "",
+              role: authRole,
+            }),
+          });
+        }
         setUser({ email: authEmail });
       }
     } catch {
@@ -220,6 +247,11 @@ export default function App() {
     setSellerStatus(null);
     setMyListings([]);
     setProfile({ display_name: "", avatar_url: "", role: "buyer" });
+    setAuthEmail("");
+    setAuthPassword("");
+    setAuthPasswordConfirm("");
+    setAuthDisplayName("");
+    setAuthRole("buyer");
     setView("browse");
   }
 
@@ -486,35 +518,99 @@ export default function App() {
         </div>
         <div style={s.authCard}>
           <div style={s.authTitle as React.CSSProperties}>
-            {authMode === "login" ? "Sign in" : "Create account"}
+            {authMode === "login" ? "Sign in to Bazaar" : "Create your account"}
           </div>
           <form onSubmit={handleAuth}>
-            <label style={s.label}>Email</label>
+            {authMode === "signup" && (
+              <>
+                <label style={s.label}>Your Name *</label>
+                <input
+                  style={s.input} type="text" value={authDisplayName} required
+                  onChange={(e) => setAuthDisplayName(e.target.value)}
+                  placeholder="Jane Smith"
+                  maxLength={80}
+                />
+              </>
+            )}
+
+            <label style={s.label}>Email *</label>
             <input
               style={s.input} type="email" value={authEmail} required
               onChange={(e) => setAuthEmail(e.target.value)}
               placeholder="you@example.com"
             />
-            <label style={s.label}>Password</label>
+
+            <label style={s.label}>Password *</label>
             <input
               style={s.input} type="password" value={authPassword} required
               onChange={(e) => setAuthPassword(e.target.value)}
               placeholder="••••••••"
+              minLength={6}
             />
+
+            {authMode === "signup" && (
+              <>
+                <label style={s.label}>Confirm Password *</label>
+                <input
+                  style={s.input} type="password" value={authPasswordConfirm} required
+                  onChange={(e) => setAuthPasswordConfirm(e.target.value)}
+                  placeholder="••••••••"
+                  minLength={6}
+                />
+
+                <label style={s.label}>I want to…</label>
+                <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+                  {(["buyer", "seller"] as const).map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => setAuthRole(r)}
+                      style={{
+                        flex: 1, padding: "12px 8px", borderRadius: 10,
+                        border: authRole === r ? "2px solid #e05c2a" : "2px solid #e5e5e5",
+                        background: authRole === r ? "#fff4ec" : "#fff",
+                        cursor: "pointer", fontWeight: 600, fontSize: 14,
+                        color: authRole === r ? "#e05c2a" : "#555",
+                      }}
+                    >
+                      {r === "buyer" ? "🛒 Buy" : "🏪 Sell"}
+                      <div style={{ fontSize: 11, fontWeight: 400, color: "#888", marginTop: 3 }}>
+                        {r === "buyer" ? "Shop the marketplace" : "List items for sale"}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+
             {authError && <div style={s.error}>{authError}</div>}
-            <button style={{ ...s.primaryBtn, width: "100%", marginTop: 4 }} disabled={authLoading}>
+            <button style={{ ...s.primaryBtn, width: "100%", marginTop: 4, padding: "12px 0", fontSize: 15 }} disabled={authLoading}>
               {authLoading ? "Please wait…" : authMode === "login" ? "Sign in" : "Create account"}
             </button>
           </form>
+
           <p style={{ textAlign: "center", marginTop: 16, fontSize: 14, color: "#666" }}>
             {authMode === "login" ? "No account? " : "Already have one? "}
             <button
               style={{ background: "none", border: "none", color: "#e05c2a", cursor: "pointer", fontWeight: 600, fontSize: 14 }}
-              onClick={() => { setAuthMode(authMode === "login" ? "signup" : "login"); setAuthError(""); }}
+              onClick={() => {
+                setAuthMode(authMode === "login" ? "signup" : "login");
+                setAuthError("");
+                setAuthPasswordConfirm("");
+              }}
             >
               {authMode === "login" ? "Sign up" : "Sign in"}
             </button>
           </p>
+
+          {authMode === "login" && (
+            <p style={{ textAlign: "center", marginTop: 8, fontSize: 13, color: "#999" }}>
+              Forgot your password? Contact{" "}
+              <a href="mailto:support@bazaar.com" style={{ color: "#e05c2a", textDecoration: "none" }}>
+                support@bazaar.com
+              </a>
+            </p>
+          )}
         </div>
       </div>
     );
