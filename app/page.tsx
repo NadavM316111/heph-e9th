@@ -75,7 +75,7 @@ type Order = {
 };
 
 type SellerOrderItem = {
-  id: number;
+  order_item_id: number;
   order_id: number;
   listing_id: number;
   buyer_email: string;
@@ -2888,7 +2888,7 @@ export default function App() {
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                   {sellerOrders.map((item) => (
-                    <div key={item.id} style={{ background: "#fff", borderRadius: 12, boxShadow: "0 1px 4px rgba(0,0,0,0.07)", overflow: "hidden" }}>
+                    <div key={item.order_item_id} style={{ background: "#fff", borderRadius: 12, boxShadow: "0 1px 4px rgba(0,0,0,0.07)", overflow: "hidden" }}>
                       <div style={{ padding: "14px 18px", borderBottom: "1px solid #f5f5f5", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
                         <div>
                           <span style={{ fontWeight: 700, fontSize: 15 }}>{item.title_snapshot}</span>
@@ -2948,16 +2948,16 @@ export default function App() {
                       {/* Mark as Shipped section */}
                       {item.status !== "shipped" && (
                         <div style={{ padding: "10px 18px", borderTop: "1px solid #f5f5f5", background: "#fafafa" }}>
-                          {shipSuccess[item.id] ? (
-                            <div style={{ color: "#166534", fontWeight: 600, fontSize: 13 }}>{shipSuccess[item.id]}</div>
-                          ) : !shipOpen[item.id] ? (
+                          {shipSuccess[item.order_item_id] ? (
+                            <div style={{ color: "#166534", fontWeight: 600, fontSize: 13 }}>{shipSuccess[item.order_item_id]}</div>
+                          ) : !shipOpen[item.order_item_id] ? (
                             <button
                               style={{
                                 padding: "7px 16px", borderRadius: 7, border: "none",
                                 background: "#1e40af", color: "#fff", fontWeight: 600,
                                 fontSize: 13, cursor: "pointer",
                               }}
-                              onClick={() => setShipOpen((prev) => ({ ...prev, [item.id]: true }))}
+                              onClick={() => setShipOpen((prev) => ({ ...prev, [item.order_item_id]: true }))}
                             >
                               🚚 Mark as Shipped
                             </button>
@@ -2971,8 +2971,8 @@ export default function App() {
                                       padding: "7px 10px", borderRadius: 7, border: "1px solid #ddd",
                                       fontSize: 13, background: "#fff", outline: "none", minWidth: 130,
                                     }}
-                                    value={shipCarrier[item.id] || ""}
-                                    onChange={(e) => setShipCarrier((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                                    value={shipCarrier[item.order_item_id] || ""}
+                                    onChange={(e) => setShipCarrier((prev) => ({ ...prev, [item.order_item_id]: e.target.value }))}
                                   >
                                     <option value="">Select carrier…</option>
                                     <option value="UPS">UPS</option>
@@ -2990,8 +2990,8 @@ export default function App() {
                                       padding: "7px 10px", borderRadius: 7, border: "1px solid #ddd",
                                       fontSize: 13, outline: "none", fontFamily: "monospace",
                                     }}
-                                    value={shipTracking[item.id] || ""}
-                                    onChange={(e) => setShipTracking((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                                    value={shipTracking[item.order_item_id] || ""}
+                                    onChange={(e) => setShipTracking((prev) => ({ ...prev, [item.order_item_id]: e.target.value }))}
                                     placeholder="e.g. 1Z999AA10123456784"
                                   />
                                 </div>
@@ -3002,23 +3002,23 @@ export default function App() {
                                     fontSize: 13, cursor: shipLoading[item.id] ? "default" : "pointer",
                                     opacity: shipLoading[item.id] ? 0.7 : 1, flexShrink: 0,
                                   }}
-                                  disabled={shipLoading[item.id]}
-                                  onClick={() => handleMarkShipped(item.id)}
+                                  disabled={shipLoading[item.order_item_id]}
+                                  onClick={() => handleMarkShipped(item.order_item_id)}
                                 >
-                                  {shipLoading[item.id] ? "Saving…" : "Confirm Shipped"}
+                                  {shipLoading[item.order_item_id] ? "Saving…" : "Confirm Shipped"}
                                 </button>
                                 <button
                                   style={{
                                     padding: "7px 12px", borderRadius: 7, border: "1px solid #ddd",
                                     background: "#fff", color: "#888", fontSize: 13, cursor: "pointer", flexShrink: 0,
                                   }}
-                                  onClick={() => setShipOpen((prev) => ({ ...prev, [item.id]: false }))}
+                                  onClick={() => setShipOpen((prev) => ({ ...prev, [item.order_item_id]: false }))}
                                 >
                                   Cancel
                                 </button>
                               </div>
-                              {shipError[item.id] && (
-                                <div style={{ color: "#b91c1c", fontSize: 12 }}>{shipError[item.id]}</div>
+                              {shipError[item.order_item_id] && (
+                                <div style={{ color: "#b91c1c", fontSize: 12 }}>{shipError[item.order_item_id]}</div>
                               )}
                             </div>
                           )}
