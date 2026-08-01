@@ -536,6 +536,43 @@ export default function App() {
 
   const topCategories = categories.filter((c) => c.parent_id === null);
 
+  // ─── Watchlist ─────────────────────────────────────────────────────────────
+  const [watchedIds, setWatchedIds] = useState<Set<number>>(new Set());
+  const [watchLoading, setWatchLoading] = useState(false);
+
+  useEffect(() => {
+    if (user) fetchWatchlist();
+  }, [user]);
+
+  async function fetchWatchlist() {
+    try {
+      const res = await fetch("/api/watchlist");
+      if (res.ok) {
+        const data: { listing_id: number }[] = await res.json();
+        setWatchedIds(new Set(data.map((r) => r.listing_id)));
+      }
+    } catch {}
+  }
+
+  async function toggleWatch(listingId: number) {
+    setWatchLoading(true);
+    try {
+      const watching = watchedIds.has(listingId);
+      await fetch("/api/watchlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ listing_id: listingId, action: watching ? "unwatch" : "watch" }),
+      });
+      setWatchedIds((prev) => {
+        const next = new Set(prev);
+        if (watching) next.delete(listingId);
+        else next.add(listingId);
+        return next;
+      });
+    } catch {}
+    setWatchLoading(false);
+  }
+
   // ─── Styles ───────────────────────────────────────────────────────────────
 
   const s: Record<string, React.CSSProperties> = {
@@ -1073,7 +1110,25 @@ export default function App() {
               </div>
             </div>
 
-            {/* Add to cart */}
+            {/* Watch / Add to cart */}
+            {selectedListing.seller_email !== user.email && (
+              <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" as const, marginBottom: 8 }}>
+                <button
+                  style={{
+                    padding: "10px 20px", borderRadius: 8, fontSize: 14, fontWeight: 600,
+                    cursor: watchLoading ? "default" : "pointer",
+                    border: watchedIds.has(selectedListing.id) ? "2px solid #e05c2a" : "2px solid #ddd",
+                    background: watchedIds.has(selectedListing.id) ? "#fff4ec" : "#fff",
+                    color: watchedIds.has(selectedListing.id) ? "#e05c2a" : "#555",
+                    transition: "all 0.15s",
+                  }}
+                  onClick={() => toggleWatch(selectedListing.id)}
+                  disabled={watchLoading}
+                >
+                  {watchedIds.has(selectedListing.id) ? "♥ Watching" : "♡ Watch"}
+                </button>
+              </div>
+            )}
             {selectedListing.seller_email !== user.email && selectedListing.status === "active" && selectedListing.quantity > 0 && (
               <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                 <button
