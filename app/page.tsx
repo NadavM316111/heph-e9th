@@ -276,7 +276,7 @@ export default function App() {
   }, [user]);
 
   useEffect(() => {
-    fetchListings({ categoryId: selectedCategory, q: searchQ, condition: filterCondition, minPrice: filterMinPrice, maxPrice: filterMaxPrice });
+    fetchListings({ categoryId: selectedCategory });
   }, [selectedCategory]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
