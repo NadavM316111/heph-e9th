@@ -40,6 +40,18 @@ export default function App() {
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
 
+  // Forgot-password flow
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotStep, setForgotStep] = useState<"request" | "reset">("request");
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotToken, setForgotToken] = useState("");
+  const [forgotTokenInput, setForgotTokenInput] = useState("");
+  const [forgotNewPassword, setForgotNewPassword] = useState("");
+  const [forgotNewPasswordConfirm, setForgotNewPasswordConfirm] = useState("");
+  const [forgotError, setForgotError] = useState("");
+  const [forgotSuccess, setForgotSuccess] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
+
   const [sellerStatus, setSellerStatus] = useState<SellerStatus | null>(null);
   const [sellerLoading, setSellerLoading] = useState(false);
 
@@ -259,6 +271,88 @@ export default function App() {
     setAuthDisplayName("");
     setAuthRole("buyer");
     setView("browse");
+  }
+
+  function openForgot() {
+    setForgotOpen(true);
+    setForgotStep("request");
+    setForgotEmail(authEmail);
+    setForgotToken("");
+    setForgotTokenInput("");
+    setForgotNewPassword("");
+    setForgotNewPasswordConfirm("");
+    setForgotError("");
+    setForgotSuccess("");
+  }
+
+  function closeForgot() {
+    setForgotOpen(false);
+  }
+
+  async function handleForgotRequest(e: React.FormEvent) {
+    e.preventDefault();
+    setForgotError("");
+    setForgotSuccess("");
+    setForgotLoading(true);
+    try {
+      const res = await fetch("/api/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "request", email: forgotEmail }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setForgotError(data.error || "Something went wrong.");
+      } else {
+        // In production this token would arrive by email.
+        // Here we surface it directly so the flow is testable without an email service.
+        setForgotToken(data.token === "NO_ACCOUNT" ? "" : data.token);
+        setForgotStep("reset");
+        if (data.token === "NO_ACCOUNT") {
+          setForgotSuccess("If that email has an account, a reset code has been sent.");
+        } else {
+          setForgotSuccess(""); // token shown in UI below
+        }
+      }
+    } catch {
+      setForgotError("Network error.");
+    } finally {
+      setForgotLoading(false);
+    }
+  }
+
+  async function handleForgotReset(e: React.FormEvent) {
+    e.preventDefault();
+    setForgotError("");
+    if (forgotNewPassword !== forgotNewPasswordConfirm) {
+      setForgotError("Passwords do not match.");
+      return;
+    }
+    if (forgotNewPassword.length < 6) {
+      setForgotError("Password must be at least 6 characters.");
+      return;
+    }
+    setForgotLoading(true);
+    try {
+      const res = await fetch("/api/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "reset", email: forgotEmail, token: forgotTokenInput, password: forgotNewPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setForgotError(data.error || "Reset failed.");
+      } else {
+        setForgotSuccess("Password updated! You can now sign in with your new password.");
+        setTimeout(() => {
+          closeForgot();
+        }, 2200);
+      }
+    } catch {
+      setForgotError("Network error.");
+    } finally {
+      setForgotLoading(false);
+    }
   }
 
   async function handleSetupPayouts() {
@@ -611,13 +705,131 @@ export default function App() {
 
           {authMode === "login" && (
             <p style={{ textAlign: "center", marginTop: 8, fontSize: 13, color: "#999" }}>
-              Forgot your password? Contact{" "}
-              <a href="mailto:support@bazaar.com" style={{ color: "#e05c2a", textDecoration: "none" }}>
-                support@bazaar.com
-              </a>
+              <button
+                style={{ background: "none", border: "none", color: "#e05c2a", cursor: "pointer", fontSize: 13, padding: 0 }}
+                onClick={openForgot}
+                type="button"
+              >
+                Forgot your password?
+              </button>
             </p>
           )}
         </div>
+
+        {/* ── Forgot-password modal ── */}
+        {forgotOpen && (
+          <div style={s.modal} onClick={(e) => { if (e.target === e.currentTarget) closeForgot(); }}>
+            <div style={{ ...s.modalBox, maxWidth: 420 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                <div style={{ fontSize: 20, fontWeight: 700 }}>
+                  {forgotStep === "request" ? "Reset your password" : "Enter your reset code"}
+                </div>
+                <button
+                  onClick={closeForgot}
+                  style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#888", lineHeight: 1 }}
+                >×</button>
+              </div>
+
+              {forgotStep === "request" && (
+                <form onSubmit={handleForgotRequest}>
+                  <p style={{ fontSize: 14, color: "#666", marginBottom: 18, lineHeight: 1.5 }}>
+                    Enter your account email. We&apos;ll generate a one-time reset code valid for 15 minutes.
+                  </p>
+                  <label style={s.label}>Email *</label>
+                  <input
+                    style={s.input}
+                    type="email"
+                    required
+                    value={forgotEmail}
+                    onChange={(e) => setForgotEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    autoFocus
+                  />
+                  {forgotError && <div style={s.error}>{forgotError}</div>}
+                  {forgotSuccess && <div style={s.success}>{forgotSuccess}</div>}
+                  <button
+                    style={{ ...s.primaryBtn, width: "100%", padding: "11px 0", fontSize: 15 }}
+                    disabled={forgotLoading}
+                  >
+                    {forgotLoading ? "Please wait…" : "Send reset code"}
+                  </button>
+                </form>
+              )}
+
+              {forgotStep === "reset" && (
+                <form onSubmit={handleForgotReset}>
+                  <p style={{ fontSize: 14, color: "#666", marginBottom: 4, lineHeight: 1.5 }}>
+                    A reset code was generated for <strong>{forgotEmail}</strong>.
+                  </p>
+                  {forgotToken && (
+                    <div style={{
+                      background: "#f0fdf4", border: "1px solid #86efac",
+                      borderRadius: 10, padding: "12px 16px", marginBottom: 18,
+                      textAlign: "center",
+                    }}>
+                      <div style={{ fontSize: 12, color: "#555", marginBottom: 4 }}>Your reset code (copy this):</div>
+                      <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: 6, color: "#166534", fontFamily: "monospace" }}>
+                        {forgotToken}
+                      </div>
+                      <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Valid for 15 minutes</div>
+                    </div>
+                  )}
+                  {!forgotToken && forgotSuccess && (
+                    <div style={{ ...s.success, marginBottom: 14 }}>{forgotSuccess}</div>
+                  )}
+                  <label style={s.label}>Reset Code *</label>
+                  <input
+                    style={{ ...s.input, fontFamily: "monospace", letterSpacing: 4, fontSize: 18, textTransform: "uppercase" }}
+                    type="text"
+                    required
+                    value={forgotTokenInput}
+                    onChange={(e) => setForgotTokenInput(e.target.value.toUpperCase())}
+                    placeholder="XXXXXXXX"
+                    maxLength={8}
+                    autoFocus
+                  />
+                  <label style={s.label}>New Password *</label>
+                  <input
+                    style={s.input}
+                    type="password"
+                    required
+                    minLength={6}
+                    value={forgotNewPassword}
+                    onChange={(e) => setForgotNewPassword(e.target.value)}
+                    placeholder="••••••••"
+                  />
+                  <label style={s.label}>Confirm New Password *</label>
+                  <input
+                    style={s.input}
+                    type="password"
+                    required
+                    minLength={6}
+                    value={forgotNewPasswordConfirm}
+                    onChange={(e) => setForgotNewPasswordConfirm(e.target.value)}
+                    placeholder="••••••••"
+                  />
+                  {forgotError && <div style={s.error}>{forgotError}</div>}
+                  {forgotSuccess && <div style={{ ...s.success, fontWeight: 600 }}>{forgotSuccess}</div>}
+                  <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+                    <button
+                      type="button"
+                      style={{ ...s.secondaryBtn, flex: 1 }}
+                      onClick={() => { setForgotStep("request"); setForgotError(""); setForgotSuccess(""); }}
+                    >
+                      ← Back
+                    </button>
+                    <button
+                      style={{ ...s.primaryBtn, flex: 2, padding: "11px 0", fontSize: 15 }}
+                      disabled={forgotLoading}
+                    >
+                      {forgotLoading ? "Resetting…" : "Reset Password"}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
