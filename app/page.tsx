@@ -85,6 +85,22 @@ type SellerOrderItem = {
   stripe_session_id: string;
 };
 
+type Message = {
+  id: number;
+  listing_id: number;
+  sender_email: string;
+  recipient_email: string;
+  body: string;
+  created_at: string;
+};
+
+type MessageThread = {
+  listing_id: number;
+  listing_title: string;
+  other_email: string;
+  messages: Message[];
+};
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
@@ -152,7 +168,22 @@ export default function App() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [sellerOrders, setSellerOrders] = useState<SellerOrderItem[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
-  const [myListingsTab, setMyListingsTab] = useState<"listings" | "orders">("listings");
+  const [myListingsTab, setMyListingsTab] = useState<"listings" | "orders" | "messages">("listings");
+
+  // Messaging
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatListing, setChatListing] = useState<Listing | null>(null);
+  const [chatMessages, setChatMessages] = useState<Message[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatSending, setChatSending] = useState(false);
+  const [sellerThreads, setSellerThreads] = useState<MessageThread[]>([]);
+  const [sellerThreadsLoading, setSellerThreadsLoading] = useState(false);
+  const [activeThread, setActiveThread] = useState<MessageThread | null>(null);
+  const [threadInput, setThreadInput] = useState("");
+  const [threadSending, setThreadSending] = useState(false);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
+  const threadBottomRef = useRef<HTMLDivElement>(null);
 
   // New listing form
   const [formTitle, setFormTitle] = useState("");
@@ -168,6 +199,8 @@ export default function App() {
   const [formSuccess, setFormSuccess] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const chatPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const threadPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     checkAuth();
@@ -248,6 +281,41 @@ export default function App() {
     if (view === "purchases") fetchOrders();
     if (view === "mylistings") { fetchMyListings(); fetchSellerOrders(); }
   }, [view]);
+
+  // Poll chat when open
+  useEffect(() => {
+    if (chatOpen && chatListing) {
+      if (chatPollRef.current) clearInterval(chatPollRef.current);
+      chatPollRef.current = setInterval(() => {
+        fetchChatMessages(chatListing.id);
+      }, 30000);
+    } else {
+      if (chatPollRef.current) { clearInterval(chatPollRef.current); chatPollRef.current = null; }
+    }
+    return () => { if (chatPollRef.current) clearInterval(chatPollRef.current); };
+  }, [chatOpen, chatListing]);
+
+  // Poll seller thread when open
+  useEffect(() => {
+    if (activeThread) {
+      if (threadPollRef.current) clearInterval(threadPollRef.current);
+      threadPollRef.current = setInterval(() => {
+        fetchThreadMessages(activeThread.listing_id, activeThread.other_email);
+      }, 30000);
+    } else {
+      if (threadPollRef.current) { clearInterval(threadPollRef.current); threadPollRef.current = null; }
+    }
+    return () => { if (threadPollRef.current) clearInterval(threadPollRef.current); };
+  }, [activeThread]);
+
+  // Scroll to bottom when chat messages update
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatMessages]);
+
+  useEffect(() => {
+    threadBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [activeThread]);
 
   async function checkAuth() {
     try {
@@ -353,6 +421,109 @@ export default function App() {
       const res = await fetch("/api/orders?role=seller");
       if (res.ok) setSellerOrders(await res.json());
     } catch {}
+  }
+
+  async function fetchChatMessages(listingId: number) {
+    setChatLoading(true);
+    try {
+      const res = await fetch(`/api/messages?listing_id=${listingId}`);
+      if (res.ok) setChatMessages(await res.json());
+    } catch {}
+    finally { setChatLoading(false); }
+  }
+
+  async function openChat(listing: Listing) {
+    setChatListing(listing);
+    setChatInput("");
+    setChatMessages([]);
+    setChatOpen(true);
+    await fetchChatMessages(listing.id);
+  }
+
+  async function sendChatMessage(e: React.FormEvent) {
+    e.preventDefault();
+    if (!chatInput.trim() || !chatListing || chatSending) return;
+    setChatSending(true);
+    try {
+      const res = await fetch("/api/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          listing_id: chatListing.id,
+          recipient_email: chatListing.seller_email,
+          body: chatInput.trim(),
+        }),
+      });
+      if (res.ok) {
+        setChatInput("");
+        await fetchChatMessages(chatListing.id);
+      }
+    } catch {}
+    finally { setChatSending(false); }
+  }
+
+  async function fetchSellerThreads() {
+    setSellerThreadsLoading(true);
+    try {
+      // Get all threads (latest message per listing)
+      const res = await fetch("/api/messages");
+      if (!res.ok) return;
+      const summaries: (Message & { listing_title?: string })[] = await res.json();
+
+      // For each unique listing_id, fetch full thread
+      const seen = new Map<number, Message>();
+      for (const m of summaries) {
+        if (!seen.has(m.listing_id)) seen.set(m.listing_id, m);
+      }
+
+      const threads: MessageThread[] = [];
+      for (const [lid, latest] of seen.entries()) {
+        const other = latest.sender_email === user!.email ? latest.recipient_email : latest.sender_email;
+        const tRes = await fetch(`/api/messages?listing_id=${lid}`);
+        const msgs: Message[] = tRes.ok ? await tRes.json() : [];
+        // Try to get listing title from myListings or listings
+        const found = myListings.find((l) => l.id === lid) || listings.find((l) => l.id === lid);
+        threads.push({
+          listing_id: lid,
+          listing_title: found?.title || `Listing #${lid}`,
+          other_email: other,
+          messages: msgs,
+        });
+      }
+      setSellerThreads(threads);
+    } catch {}
+    finally { setSellerThreadsLoading(false); }
+  }
+
+  async function fetchThreadMessages(listingId: number, otherEmail: string) {
+    try {
+      const res = await fetch(`/api/messages?listing_id=${listingId}`);
+      if (!res.ok) return;
+      const msgs: Message[] = await res.json();
+      setActiveThread((prev) => prev && prev.listing_id === listingId ? { ...prev, messages: msgs } : prev);
+    } catch {}
+  }
+
+  async function sendThreadMessage(e: React.FormEvent) {
+    e.preventDefault();
+    if (!threadInput.trim() || !activeThread || threadSending) return;
+    setThreadSending(true);
+    try {
+      const res = await fetch("/api/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          listing_id: activeThread.listing_id,
+          recipient_email: activeThread.other_email,
+          body: threadInput.trim(),
+        }),
+      });
+      if (res.ok) {
+        setThreadInput("");
+        await fetchThreadMessages(activeThread.listing_id, activeThread.other_email);
+      }
+    } catch {}
+    finally { setThreadSending(false); }
   }
 
   async function fetchMyListings() {
@@ -1514,6 +1685,94 @@ export default function App() {
                 >
                   {watchedIds.has(selectedListing.id) ? "♥ Watching" : "♡ Watch"}
                 </button>
+                <button
+                  style={{
+                    padding: "10px 20px", borderRadius: 8, fontSize: 14, fontWeight: 600,
+                    cursor: "pointer", border: "2px solid #ddd",
+                    background: "#fff", color: "#555", transition: "all 0.15s",
+                  }}
+                  onClick={() => openChat(selectedListing)}
+                >
+                  💬 Ask seller a question
+                </button>
+              </div>
+            )}
+
+            {/* Inline chat thread */}
+            {chatOpen && chatListing?.id === selectedListing.id && (
+              <div style={{
+                background: "#fff", borderRadius: 14, border: "1px solid #e5e5e5",
+                boxShadow: "0 2px 12px rgba(0,0,0,0.08)", marginTop: 8, marginBottom: 8, overflow: "hidden",
+              }}>
+                <div style={{
+                  background: "#f9f9f9", borderBottom: "1px solid #f0f0f0",
+                  padding: "12px 18px", display: "flex", justifyContent: "space-between", alignItems: "center",
+                }}>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>
+                    💬 Chat with {sellerName(selectedListing.seller_email)}
+                  </div>
+                  <button
+                    onClick={() => { setChatOpen(false); setChatMessages([]); }}
+                    style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#888", lineHeight: 1 }}
+                  >×</button>
+                </div>
+
+                {/* Messages */}
+                <div style={{ maxHeight: 320, overflowY: "auto", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
+                  {chatLoading && chatMessages.length === 0 && (
+                    <div style={{ textAlign: "center", color: "#bbb", fontSize: 13, padding: "20px 0" }}>Loading messages…</div>
+                  )}
+                  {!chatLoading && chatMessages.length === 0 && (
+                    <div style={{ textAlign: "center", color: "#bbb", fontSize: 13, padding: "20px 0" }}>
+                      No messages yet. Say hello!
+                    </div>
+                  )}
+                  {chatMessages.map((msg) => {
+                    const isMe = msg.sender_email === user.email;
+                    return (
+                      <div key={msg.id} style={{ display: "flex", flexDirection: "column", alignItems: isMe ? "flex-end" : "flex-start" }}>
+                        <div style={{
+                          maxWidth: "78%", padding: "9px 14px", borderRadius: isMe ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
+                          background: isMe ? "#e05c2a" : "#f0ede8",
+                          color: isMe ? "#fff" : "#111",
+                          fontSize: 14, lineHeight: 1.5,
+                        }}>
+                          {msg.body}
+                        </div>
+                        <div style={{ fontSize: 11, color: "#aaa", marginTop: 3 }}>
+                          {isMe ? "You" : sellerName(msg.sender_email)} · {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div ref={chatBottomRef} />
+                </div>
+
+                {/* Input */}
+                <form onSubmit={sendChatMessage} style={{ borderTop: "1px solid #f0f0f0", padding: "10px 14px", display: "flex", gap: 8 }}>
+                  <input
+                    style={{
+                      flex: 1, padding: "9px 12px", borderRadius: 8, border: "1px solid #ddd",
+                      fontSize: 14, outline: "none",
+                    }}
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    placeholder="Type a message…"
+                    disabled={chatSending}
+                  />
+                  <button
+                    type="submit"
+                    disabled={chatSending || !chatInput.trim()}
+                    style={{
+                      padding: "9px 18px", borderRadius: 8, border: "none",
+                      background: "#e05c2a", color: "#fff", fontWeight: 600,
+                      fontSize: 14, cursor: chatSending ? "default" : "pointer",
+                      opacity: (!chatInput.trim() || chatSending) ? 0.5 : 1,
+                    }}
+                  >
+                    {chatSending ? "…" : "Send"}
+                  </button>
+                </form>
               </div>
             )}
             {selectedListing.seller_email !== user.email && selectedListing.status === "active" && selectedListing.quantity > 0 && (
@@ -2161,10 +2420,13 @@ export default function App() {
 
             {/* Sub-tabs */}
             <div style={{ display: "flex", gap: 4, marginBottom: 24, borderBottom: "2px solid #f0f0f0", paddingBottom: 0 }}>
-              {(["listings", "orders"] as const).map((tab) => (
+              {(["listings", "orders", "messages"] as const).map((tab) => (
                 <button
                   key={tab}
-                  onClick={() => setMyListingsTab(tab)}
+                  onClick={() => {
+                    setMyListingsTab(tab);
+                    if (tab === "messages") { setActiveThread(null); fetchSellerThreads(); }
+                  }}
                   style={{
                     padding: "8px 20px", border: "none", cursor: "pointer",
                     fontSize: 14, fontWeight: myListingsTab === tab ? 700 : 500,
@@ -2174,7 +2436,11 @@ export default function App() {
                     marginBottom: -2,
                   }}
                 >
-                  {tab === "listings" ? `My Items (${myListings.length})` : `Incoming Orders (${sellerOrders.length})`}
+                  {tab === "listings"
+                    ? `My Items (${myListings.length})`
+                    : tab === "orders"
+                    ? `Incoming Orders (${sellerOrders.length})`
+                    : `Messages (${sellerThreads.length})`}
                 </button>
               ))}
             </div>
@@ -2286,6 +2552,122 @@ export default function App() {
                       )}
                     </div>
                   ))}
+                </div>
+              )
+            )}
+
+            {myListingsTab === "messages" && (
+              sellerThreadsLoading && sellerThreads.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "60px 0", color: "#bbb" }}>
+                  <div style={{ fontSize: 32, marginBottom: 10 }}>💬</div>
+                  <div style={{ fontSize: 15 }}>Loading messages…</div>
+                </div>
+              ) : sellerThreads.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "60px 0", color: "#999" }}>
+                  <div style={{ fontSize: 48, marginBottom: 12 }}>💬</div>
+                  <div style={{ fontSize: 18, fontWeight: 600 }}>No messages yet</div>
+                  <div style={{ fontSize: 14, marginTop: 4 }}>When buyers ask questions about your listings, they appear here.</div>
+                </div>
+              ) : (
+                <div style={{ display: "flex", gap: 20 }}>
+                  {/* Thread list */}
+                  <div style={{ width: 260, flexShrink: 0, display: "flex", flexDirection: "column", gap: 10 }}>
+                    {sellerThreads.map((thread) => (
+                      <div
+                        key={`${thread.listing_id}-${thread.other_email}`}
+                        onClick={() => setActiveThread(thread)}
+                        style={{
+                          background: "#fff", borderRadius: 10,
+                          border: activeThread?.listing_id === thread.listing_id && activeThread?.other_email === thread.other_email
+                            ? "2px solid #e05c2a" : "1px solid #e5e5e5",
+                          padding: "12px 14px", cursor: "pointer",
+                          boxShadow: "0 1px 4px rgba(0,0,0,0.05)",
+                          transition: "border 0.12s",
+                        }}
+                      >
+                        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {thread.listing_title}
+                        </div>
+                        <div style={{ fontSize: 12, color: "#e05c2a", fontWeight: 600, marginBottom: 4 }}>
+                          {thread.other_email.split("@")[0]}
+                        </div>
+                        {thread.messages.length > 0 && (
+                          <div style={{ fontSize: 12, color: "#888", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {thread.messages[thread.messages.length - 1].body}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Active thread */}
+                  <div style={{ flex: 1, background: "#fff", borderRadius: 14, border: "1px solid #e5e5e5", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+                    {!activeThread ? (
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 300, color: "#bbb", fontSize: 14 }}>
+                        Select a conversation
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{ background: "#f9f9f9", borderBottom: "1px solid #f0f0f0", padding: "12px 18px" }}>
+                          <div style={{ fontWeight: 700, fontSize: 15 }}>{activeThread.listing_title}</div>
+                          <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>
+                            Conversation with {activeThread.other_email}
+                          </div>
+                        </div>
+
+                        <div style={{ flex: 1, maxHeight: 380, overflowY: "auto", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
+                          {activeThread.messages.length === 0 && (
+                            <div style={{ textAlign: "center", color: "#bbb", fontSize: 13, padding: "20px 0" }}>No messages in this thread.</div>
+                          )}
+                          {activeThread.messages.map((msg) => {
+                            const isMe = msg.sender_email === user.email;
+                            return (
+                              <div key={msg.id} style={{ display: "flex", flexDirection: "column", alignItems: isMe ? "flex-end" : "flex-start" }}>
+                                <div style={{
+                                  maxWidth: "78%", padding: "9px 14px",
+                                  borderRadius: isMe ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
+                                  background: isMe ? "#e05c2a" : "#f0ede8",
+                                  color: isMe ? "#fff" : "#111",
+                                  fontSize: 14, lineHeight: 1.5,
+                                }}>
+                                  {msg.body}
+                                </div>
+                                <div style={{ fontSize: 11, color: "#aaa", marginTop: 3 }}>
+                                  {isMe ? "You" : msg.sender_email.split("@")[0]} · {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                                </div>
+                              </div>
+                            );
+                          })}
+                          <div ref={threadBottomRef} />
+                        </div>
+
+                        <form onSubmit={sendThreadMessage} style={{ borderTop: "1px solid #f0f0f0", padding: "10px 14px", display: "flex", gap: 8 }}>
+                          <input
+                            style={{
+                              flex: 1, padding: "9px 12px", borderRadius: 8,
+                              border: "1px solid #ddd", fontSize: 14, outline: "none",
+                            }}
+                            value={threadInput}
+                            onChange={(e) => setThreadInput(e.target.value)}
+                            placeholder="Reply…"
+                            disabled={threadSending}
+                          />
+                          <button
+                            type="submit"
+                            disabled={threadSending || !threadInput.trim()}
+                            style={{
+                              padding: "9px 18px", borderRadius: 8, border: "none",
+                              background: "#e05c2a", color: "#fff", fontWeight: 600,
+                              fontSize: 14, cursor: threadSending ? "default" : "pointer",
+                              opacity: (!threadInput.trim() || threadSending) ? 0.5 : 1,
+                            }}
+                          >
+                            {threadSending ? "…" : "Send"}
+                          </button>
+                        </form>
+                      </>
+                    )}
+                  </div>
                 </div>
               )
             )}
