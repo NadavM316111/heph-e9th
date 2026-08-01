@@ -70,7 +70,7 @@ export default function App() {
   const [listings, setListings] = useState<Listing[]>([]);
   const [myListings, setMyListings] = useState<Listing[]>([]);
 
-  const [view, setView] = useState<"browse" | "sell" | "mylistings" | "profile">("browse");
+  const [view, setView] = useState<"browse" | "sell" | "mylistings" | "watchlist" | "profile">("browse");
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
   const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
 
@@ -539,6 +539,7 @@ export default function App() {
   // ─── Watchlist ─────────────────────────────────────────────────────────────
   const [watchedIds, setWatchedIds] = useState<Set<number>>(new Set());
   const [watchLoading, setWatchLoading] = useState(false);
+  const [watchedListings, setWatchedListings] = useState<Listing[]>([]);
 
   useEffect(() => {
     if (user) fetchWatchlist();
@@ -550,9 +551,30 @@ export default function App() {
       if (res.ok) {
         const data: { listing_id: number }[] = await res.json();
         setWatchedIds(new Set(data.map((r) => r.listing_id)));
+        // Resolve full listing objects from the already-loaded listings array
+        // We'll refresh after listings load too
+        setWatchedListings((prev) => {
+          void prev;
+          return [];
+        });
       }
     } catch {}
   }
+
+  // Keep watchedListings in sync whenever listings or watchedIds change
+  useEffect(() => {
+    if (watchedIds.size === 0) {
+      setWatchedListings([]);
+      return;
+    }
+    // Fetch all listings without a category filter to find watched ones
+    fetch("/api/listings")
+      .then((r) => r.ok ? r.json() : [])
+      .then((all: Listing[]) => {
+        setWatchedListings(all.filter((l) => watchedIds.has(l.id)));
+      })
+      .catch(() => {});
+  }, [watchedIds]);
 
   async function toggleWatch(listingId: number) {
     setWatchLoading(true);
@@ -1010,6 +1032,9 @@ export default function App() {
           </button>
           <button style={view === "mylistings" ? s.navBtnActive : s.navBtn} onClick={() => setView("mylistings")}>
             My Listings
+          </button>
+          <button style={view === "watchlist" ? s.navBtnActive : s.navBtn} onClick={() => setView("watchlist")}>
+            Watchlist{watchedIds.size > 0 ? ` (${watchedIds.size})` : ""}
           </button>
           <button style={view === "profile" ? s.navBtnActive : s.navBtn} onClick={() => setView("profile")}>
             Profile
@@ -1502,6 +1527,104 @@ export default function App() {
               </button>
             </form>
           </div>
+        )}
+
+        {/* ── Watchlist ── */}
+        {view === "watchlist" && (
+          <>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+              <h1 style={s.sectionTitle}>Your Watchlist</h1>
+              <span style={{ fontSize: 13, color: "#888" }}>
+                {watchedIds.size} item{watchedIds.size !== 1 ? "s" : ""} saved
+              </span>
+            </div>
+
+            {watchedListings.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "60px 0", color: "#999" }}>
+                <div style={{ fontSize: 48, marginBottom: 12 }}>♡</div>
+                <div style={{ fontSize: 18, fontWeight: 600 }}>Nothing saved yet</div>
+                <div style={{ fontSize: 14, marginTop: 4, marginBottom: 20 }}>
+                  Hit the ♡ Watch button on any listing to save it here.
+                </div>
+                <button
+                  style={s.primaryBtn}
+                  onClick={() => { setView("browse"); setSelectedListing(null); }}
+                >
+                  Browse listings
+                </button>
+              </div>
+            ) : (
+              <div style={s.grid}>
+                {watchedListings.map((listing) => (
+                  <div key={listing.id} style={{ ...s.card, position: "relative" }}>
+                    {/* Unwatch button */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); toggleWatch(listing.id); }}
+                      disabled={watchLoading}
+                      title="Remove from watchlist"
+                      style={{
+                        position: "absolute", top: 10, right: 10, zIndex: 2,
+                        width: 32, height: 32, borderRadius: "50%",
+                        border: "none", background: "rgba(255,255,255,0.9)",
+                        cursor: "pointer", fontSize: 16, lineHeight: 1,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
+                        color: "#e05c2a",
+                      }}
+                    >
+                      ♥
+                    </button>
+
+                    {/* Card body — clicking opens detail */}
+                    <div
+                      onClick={() => { setSelectedListing(listing); setView("browse"); }}
+                      style={{ cursor: "pointer" }}
+                    >
+                      {listing.photos && listing.photos[0]
+                        ? <img src={listing.photos[0]} alt={listing.title} style={s.cardImg as React.CSSProperties} />
+                        : <div style={s.cardImgPlaceholder}>📦</div>
+                      }
+                      <div style={s.cardBody}>
+                        <div style={s.cardTitle}>{listing.title}</div>
+                        <div style={s.cardPrice}>{formatPrice(listing.price_cents)}</div>
+                        <div style={s.cardMeta}>
+                          <span style={{ ...s.badge, background: conditionColor(listing.condition), color: "#333" }}>
+                            {conditionLabel(listing.condition)}
+                          </span>
+                          {" · "}{listing.category_name}
+                        </div>
+                        <div style={{ ...s.cardMeta, marginTop: 6 }}>
+                          Seller: <strong>{listing.seller_email}</strong>
+                        </div>
+                        {listing.status !== "active" && (
+                          <div style={{ marginTop: 6, fontSize: 12, color: "#b91c1c", fontWeight: 600 }}>
+                            ⚠ No longer available
+                          </div>
+                        )}
+                        {listing.quantity < 3 && listing.status === "active" && (
+                          <div style={{ marginTop: 6, fontSize: 12, color: "#92400e", fontWeight: 600 }}>
+                            Only {listing.quantity} left!
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Add to cart strip */}
+                    {listing.status === "active" && listing.quantity > 0 && listing.seller_email !== user.email && (
+                      <div style={{ padding: "0 14px 14px" }}>
+                        <button
+                          style={{ ...s.primaryBtn, width: "100%", padding: "9px 0", fontSize: 13 }}
+                          onClick={(e) => { e.stopPropagation(); addToCart(listing, 1); setCartOpen(true); }}
+                        >
+                          🛒 Add to Cart
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
         )}
 
         {/* ── My Listings ── */}
