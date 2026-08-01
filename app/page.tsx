@@ -1775,7 +1775,7 @@ export default function App() {
                 />
 
                 <label style={s.label}>Category *</label>
-                <select style={s.select} value={formCategory} onChange={(e) => setFormCategory(Number(e.target.value) as number | "")} required>
+                <select style={s.select} value={formCategory} onChange={(e) => setFormCategory(e.target.value === "" ? "" : Number(e.target.value))} required>
                   <option value="">Select a category</option>
                   {categories.map((c) => (
                     <option key={c.id} value={c.id}>{c.parent_id ? "  └ " : ""}{c.name}</option>
