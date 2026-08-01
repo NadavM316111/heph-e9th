@@ -909,7 +909,7 @@ export default function App() {
         setFormCondition("good"); setFormPrice(""); setFormQuantity("1");
         setFormPhotos([]); setFormPhotoUrls([]);
         fetchMyListings();
-        fetchListings(selectedCategory);
+        fetchListings({ categoryId: selectedCategory });
         setTimeout(() => { setView("mylistings"); setFormSuccess(""); }, 1500);
       }
     } catch {
