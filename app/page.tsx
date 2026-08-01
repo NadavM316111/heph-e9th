@@ -498,7 +498,11 @@ export default function App() {
     setOrdersLoading(true);
     try {
       const res = await fetch("/api/orders");
-      if (res.ok) setOrders(await res.json());
+      if (res.ok) {
+        const data: Order[] = await res.json();
+        setOrders(data);
+        fetchReviewedItems(data);
+      }
     } catch {}
     finally { setOrdersLoading(false); }
   }
@@ -584,15 +588,28 @@ export default function App() {
     finally { setChatSending(false); }
   }
 
-  async function fetchReviewedItems() {
-    // Build set of order_item_ids already reviewed by this user
-    // We infer from our own orders' items — check if a review exists
-    // We'll populate this lazily when orders load
-    try {
-      // Get all reviews written by the signed-in user via a seller_email wildcard isn't possible,
-      // so we query each shipped item. Instead, we store reviewed ids in state after posting.
-      // On mount, we rebuild from local knowledge — reviews are fetched per-item on demand.
-    } catch {}
+  async function fetchReviewedItems(orderList: Order[]) {
+    // For each shipped item across all orders, check if a review already exists
+    const shippedItems: OrderItem[] = orderList.flatMap((o) =>
+      o.items.filter((i) => i.status === "shipped")
+    );
+    if (shippedItems.length === 0) return;
+    // Query reviews written by this user for each seller encountered
+    const sellerEmails = Array.from(new Set(shippedItems.map((i) => i.seller_email)));
+    const reviewed = new Set<number>();
+    await Promise.all(
+      sellerEmails.map(async (se) => {
+        try {
+          const res = await fetch(`/api/reviews?seller_email=${encodeURIComponent(se)}`);
+          if (!res.ok) return;
+          const reviews: Review[] = await res.json();
+          for (const r of reviews) {
+            reviewed.add(r.order_item_id);
+          }
+        } catch {}
+      })
+    );
+    setReviewedItemIds(reviewed);
   }
 
   async function openSellerModal(email: string) {
@@ -2081,6 +2098,9 @@ export default function App() {
                           <div style={{ ...s.cardMeta, marginTop: 6 }}>
                             Seller: <strong>{sellerName(listing.seller_email)}</strong>
                           </div>
+                          {listing.quantity === 0 && (
+                            <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: "#b91c1c" }}>Sold Out</div>
+                          )}
                           {(() => {
                             const sp = sellerProfiles[listing.seller_email];
                             if (sp && sp.review_count && sp.review_count > 0 && sp.avg_rating !== undefined) {
@@ -2127,9 +2147,14 @@ export default function App() {
               <span style={{ ...s.badge, background: "#e8f0fe", color: "#1a56db", fontSize: 13, padding: "4px 10px" }}>
                 {selectedListing.category_name}
               </span>
-              <span style={{ ...s.badge, background: "#f0fdf4", color: "#166534", fontSize: 13, padding: "4px 10px" }}>
-                Qty: {selectedListing.quantity}
-              </span>
+                        <span style={{
+                          ...s.badge,
+                          background: selectedListing.quantity === 0 ? "#fee2e2" : "#f0fdf4",
+                          color: selectedListing.quantity === 0 ? "#b91c1c" : "#166534",
+                          fontSize: 13, padding: "4px 10px"
+                        }}>
+                        {selectedListing.quantity === 0 ? "Sold Out" : `Qty: ${selectedListing.quantity}`}
+                      </span>
             </div>
             {selectedListing.description && (
               <div style={{ background: "#fff", borderRadius: 12, padding: 20, marginBottom: 20, fontSize: 15, lineHeight: 1.6 }}>
@@ -2293,6 +2318,9 @@ export default function App() {
                   <span style={{ color: "#15803d", fontWeight: 600, fontSize: 14 }}>✓ Added!</span>
                 )}
               </div>
+            )}
+            {selectedListing.seller_email !== user.email && selectedListing.status === "active" && selectedListing.quantity === 0 && (
+              <div style={{ color: "#b91c1c", fontSize: 15, fontWeight: 700 }}>😔 Sold Out</div>
             )}
             {selectedListing.seller_email === user.email && (
               <div style={{ color: "#888", fontSize: 14, fontStyle: "italic" }}>This is your listing.</div>

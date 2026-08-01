@@ -171,5 +171,19 @@ export async function PATCH(req: NextRequest) {
     "WHERE order_id IN (SELECT id FROM " + P + "_orders WHERE stripe_session_id = $1 AND buyer_email = $2)",
     [stripe_session_id, email]
   );
+  // Decrement listing quantities for all items in this order
+  await q(
+    "UPDATE " + P + "_listings SET quantity = GREATEST(0, quantity - oi.quantity) " +
+    "FROM " + P + "_order_items oi " +
+    "JOIN " + P + "_orders o ON o.id = oi.order_id " +
+    "WHERE " + P + "_listings.id = oi.listing_id " +
+    "AND o.stripe_session_id = $1 AND o.buyer_email = $2",
+    [stripe_session_id, email]
+  );
+  // Mark listings with zero quantity as sold
+  await q(
+    "UPDATE " + P + "_listings SET status = 'sold' WHERE quantity = 0 AND status = 'active'",
+    []
+  );
   return NextResponse.json({ ok: true });
 }
