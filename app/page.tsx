@@ -100,6 +100,16 @@ export default function App() {
     checkAuth();
     fetchCategories();
     fetchListings(null);
+
+    // After Stripe onboarding, they land back at /?seller=done or /?seller=retry
+    const params = new URLSearchParams(window.location.search);
+    const sellerParam = params.get("seller");
+    if (sellerParam === "done" || sellerParam === "retry") {
+      // Clean the URL so refreshing doesn't re-trigger
+      window.history.replaceState({}, "", window.location.pathname);
+      // Switch to sell view so user sees their updated status
+      setView("sell");
+    }
   }, []);
 
   useEffect(() => {
@@ -107,6 +117,14 @@ export default function App() {
       fetchSellerStatus();
       fetchMyListings();
       fetchProfile();
+
+      // Re-check seller status if returning from Stripe
+      const params = new URLSearchParams(window.location.search);
+      const sellerParam = params.get("seller");
+      if (sellerParam === "done" || sellerParam === "retry") {
+        // fetchSellerStatus already called above; just ensure view is sell
+        setView("sell");
+      }
     }
   }, [user]);
 
@@ -1159,15 +1177,27 @@ export default function App() {
           <>
             <h1 style={s.sectionTitle}>List an Item for Sale</h1>
 
-            {/* Payout banner */}
-            {sellerStatus && !sellerStatus.ready && (
+            {/* Payout status banner */}
+            {sellerStatus === null && (
               <div style={s.sellerBanner}>
                 <div>
                   <div style={{ fontWeight: 600, marginBottom: 2 }}>Set up payouts to start selling</div>
-                  <div style={{ fontSize: 13, color: "#666" }}>You need to connect your bank account before listing items.</div>
+                  <div style={{ fontSize: 13, color: "#666" }}>Connect your bank account so buyers can pay you directly.</div>
                 </div>
                 <button style={s.primaryBtn} onClick={handleSetupPayouts} disabled={sellerLoading}>
                   {sellerLoading ? "Redirecting…" : "Set up payouts →"}
+                </button>
+              </div>
+            )}
+
+            {sellerStatus !== null && !sellerStatus.ready && (
+              <div style={s.sellerBanner}>
+                <div>
+                  <div style={{ fontWeight: 600, marginBottom: 2 }}>Finish setting up payouts</div>
+                  <div style={{ fontSize: 13, color: "#666" }}>Your payout account isn&apos;t fully connected yet. Complete onboarding to list items.</div>
+                </div>
+                <button style={s.primaryBtn} onClick={handleSetupPayouts} disabled={sellerLoading}>
+                  {sellerLoading ? "Redirecting…" : "Continue setup →"}
                 </button>
               </div>
             )}
@@ -1180,17 +1210,7 @@ export default function App() {
               </div>
             )}
 
-            {sellerStatus === null ? (
-              <div style={s.sellerBanner}>
-                <div>
-                  <div style={{ fontWeight: 600, marginBottom: 2 }}>Set up payouts to start selling</div>
-                  <div style={{ fontSize: 13, color: "#666" }}>Connect your bank account so buyers can pay you directly.</div>
-                </div>
-                <button style={s.primaryBtn} onClick={handleSetupPayouts} disabled={sellerLoading}>
-                  {sellerLoading ? "Redirecting…" : "Set up payouts →"}
-                </button>
-              </div>
-            ) : sellerStatus?.ready ? (
+            {sellerStatus?.ready ? (
               <form onSubmit={handleCreateListing} style={{ maxWidth: 560 }}>
                 <label style={s.label}>Title *</label>
                 <input
