@@ -1016,8 +1016,6 @@ export default function App() {
   }
 
   // ─── Main App ──────────────────────────────────────────────────────────────
-  const currentYear = new Date().getFullYear();
-
   return (
     <div style={s.root}>
       {/* Header */}
@@ -1688,17 +1686,7 @@ export default function App() {
         )}
       </div>
 
-      <footer style={{
-        textAlign: "center",
-        padding: "24px 16px",
-        fontSize: 13,
-        color: "#aaa",
-        borderTop: "1px solid #e5e5e5",
-        background: "#fff",
-        marginTop: 40,
-      }}>
-        Bazaar &copy; {currentYear}
-      </footer>
+
     </div>
   );
 }
