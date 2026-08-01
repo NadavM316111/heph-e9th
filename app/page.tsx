@@ -1092,26 +1092,36 @@ export default function App() {
   const s: Record<string, React.CSSProperties> = {
     root: { fontFamily: "system-ui, sans-serif", minHeight: "100vh", background: "#f6f6f4", color: "#111" },
     header: {
-      background: "#fff", borderBottom: "1px solid #e5e5e5",
-      padding: "0 24px", display: "flex", alignItems: "center",
-      justifyContent: "space-between", height: 60, position: "sticky", top: 0, zIndex: 100,
+      background: "linear-gradient(135deg, #fff 0%, #fdf8f5 100%)",
+      borderBottom: "1px solid #ede8e2",
+      padding: "0 28px", display: "flex", alignItems: "center",
+      justifyContent: "space-between", height: 64, position: "sticky", top: 0, zIndex: 100,
+      boxShadow: "0 1px 8px rgba(224,92,42,0.06)",
     },
-    logo: { fontSize: 24, fontWeight: 800, color: "#e05c2a", letterSpacing: -1, cursor: "pointer" },
+    logo: {
+      fontSize: 26, fontWeight: 900, color: "#e05c2a", letterSpacing: -1.5,
+      cursor: "pointer", userSelect: "none" as const,
+      textShadow: "0 1px 2px rgba(224,92,42,0.15)",
+    },
     cartBtn: {
-      padding: "8px 14px", borderRadius: 8, border: "1px solid #ddd",
+      padding: "8px 16px", borderRadius: 20, border: "1.5px solid #e8e0d8",
       cursor: "pointer", fontSize: 14, fontWeight: 600,
-      background: "#fff", color: "#444", position: "relative" as const,
+      background: "#fff", color: "#555",
+      transition: "all 0.15s",
+      position: "relative" as const,
     },
-    nav: { display: "flex", gap: 8, alignItems: "center" },
+    nav: { display: "flex", gap: 2, alignItems: "center" },
     navBtn: {
-      padding: "8px 16px", borderRadius: 8, border: "none",
-      cursor: "pointer", fontSize: 14, fontWeight: 500,
-      background: "transparent", color: "#444",
+      padding: "7px 14px", borderRadius: 20, border: "none",
+      cursor: "pointer", fontSize: 13, fontWeight: 500,
+      background: "transparent", color: "#666",
+      transition: "background 0.15s, color 0.15s",
     },
     navBtnActive: {
-      padding: "8px 16px", borderRadius: 8, border: "none",
-      cursor: "pointer", fontSize: 14, fontWeight: 600,
-      background: "#f0ede8", color: "#e05c2a",
+      padding: "7px 14px", borderRadius: 20, border: "none",
+      cursor: "pointer", fontSize: 13, fontWeight: 700,
+      background: "#fff0e8", color: "#e05c2a",
+      boxShadow: "inset 0 0 0 1.5px #f5cdb8",
     },
     primaryBtn: {
       padding: "10px 20px", borderRadius: 8, border: "none",
@@ -1627,8 +1637,35 @@ export default function App() {
           >
             🛒 Cart{cart.length > 0 ? ` (${cart.reduce((n, i) => n + i.quantity, 0)})` : ""}
           </button>
-          <span style={{ fontSize: 13, color: "#888", marginLeft: 8 }}>{user.email}</span>
-          <button style={s.secondaryBtn} onClick={handleLogout}>Sign out</button>
+          <div style={{
+          display: "flex", alignItems: "center", gap: 10, marginLeft: 8,
+          padding: "5px 12px 5px 8px", borderRadius: 20,
+          background: "#f5f0eb", border: "1px solid #ede5db",
+        }}>
+          {profile.avatar_url ? (
+            <img src={profile.avatar_url} alt="avatar"
+              style={{ width: 26, height: 26, borderRadius: "50%", objectFit: "cover", border: "1.5px solid #e05c2a", flexShrink: 0 }} />
+          ) : (
+            <div style={{
+              width: 26, height: 26, borderRadius: "50%", background: "#e05c2a",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 12, color: "#fff", fontWeight: 700, flexShrink: 0,
+            }}>
+              {(profile.display_name || user.email).charAt(0).toUpperCase()}
+            </div>
+          )}
+          <span style={{ fontSize: 12, color: "#7a6a5a", fontWeight: 500, maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {profile.display_name || user.email}
+          </span>
+          <button
+            onClick={handleLogout}
+            style={{
+              padding: "4px 10px", borderRadius: 14, border: "none",
+              background: "#ede5db", color: "#7a6a5a", fontSize: 12,
+              fontWeight: 600, cursor: "pointer", transition: "background 0.15s",
+            }}
+          >Sign out</button>
+        </div>
         </div>
       </div>
 
