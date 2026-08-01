@@ -927,7 +927,7 @@ export default function App() {
       body: JSON.stringify({ id: listing.id, status: newStatus }),
     });
     fetchMyListings();
-    fetchListings(selectedCategory);
+    fetchListings({ categoryId: selectedCategory });
   }
 
   function addToCart(listing: Listing, qty: number) {
@@ -1023,7 +1023,7 @@ export default function App() {
       body: JSON.stringify({ id: listing.id, status: "removed" }),
     });
     fetchMyListings();
-    fetchListings(selectedCategory);
+    fetchListings({ categoryId: selectedCategory });
   }
 
   const topCategories = categories.filter((c) => c.parent_id === null);
