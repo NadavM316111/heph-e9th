@@ -90,6 +90,12 @@ export default function App() {
     fetchListings(selectedCategory);
   }, [selectedCategory]);
 
+  useEffect(() => {
+    if (view === "sell" && user) {
+      fetchSellerStatus();
+    }
+  }, [view]);
+
   async function checkAuth() {
     try {
       const res = await fetch("/api/auth");
@@ -783,7 +789,17 @@ export default function App() {
               </div>
             )}
 
-            {sellerStatus?.ready ? (
+            {sellerStatus === null ? (
+              <div style={s.sellerBanner}>
+                <div>
+                  <div style={{ fontWeight: 600, marginBottom: 2 }}>Set up payouts to start selling</div>
+                  <div style={{ fontSize: 13, color: "#666" }}>Connect your bank account so buyers can pay you directly.</div>
+                </div>
+                <button style={s.primaryBtn} onClick={handleSetupPayouts} disabled={sellerLoading}>
+                  {sellerLoading ? "Redirecting…" : "Set up payouts →"}
+                </button>
+              </div>
+            ) : sellerStatus?.ready ? (
               <form onSubmit={handleCreateListing} style={{ maxWidth: 560 }}>
                 <label style={s.label}>Title *</label>
                 <input
@@ -862,11 +878,7 @@ export default function App() {
                   {formLoading ? "Creating listing…" : "List Item"}
                 </button>
               </form>
-            ) : (
-              !sellerStatus && (
-                <div style={{ color: "#888", fontSize: 14 }}>Loading seller status…</div>
-              )
-            )}
+            ) : null}
           </>
         )}
 
