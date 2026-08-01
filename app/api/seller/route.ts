@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
       acct = created.id;
       await q(
         "INSERT INTO " + P + "_sellers (owner_email, stripe_account_id) VALUES ($1, $2) " +
-        "ON CONFLICT (owner_email) DO UPDATE SET stripe_account_id = $2",
+        "ON CONFLICT (owner_email) DO UPDATE SET stripe_account_id = EXCLUDED.stripe_account_id",
         [email, acct]
       );
     }

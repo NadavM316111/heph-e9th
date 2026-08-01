@@ -786,7 +786,7 @@ export default function App() {
     return (
       <div style={s.root}>
         <div style={s.header}>
-          <span style={s.logo}>Bazaar</span>
+          <span style={s.logo} className="bazaar-logo">Bazaar</span>
         </div>
         <div style={s.authCard}>
           <div style={s.authTitle as React.CSSProperties}>
@@ -1046,7 +1046,7 @@ export default function App() {
     <div style={s.root}>
       {/* Header */}
       <div style={s.header}>
-        <span style={s.logo} onClick={() => { setView("browse"); setSelectedListing(null); }}>Bazaar</span>
+        <span style={s.logo} className="bazaar-logo" onClick={() => { setView("browse"); setSelectedListing(null); }}>Bazaar</span>
         <div style={s.nav}>
           <button style={view === "browse" ? s.navBtnActive : s.navBtn} onClick={() => { setView("browse"); setSelectedListing(null); }}>
             Browse
