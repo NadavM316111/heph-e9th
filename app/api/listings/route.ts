@@ -34,8 +34,40 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const categoryParam = searchParams.get("category");
+  const qParam = searchParams.get("q");
+  const conditionParam = searchParams.get("condition");
+  const minPriceParam = searchParams.get("min_price");
+  const maxPriceParam = searchParams.get("max_price");
 
-  let rows: Array<{
+  const conditions: string[] = ["status = $1"];
+  const values: (string | number | number[])[] = ["active"];
+  let idx = 2;
+
+  if (categoryParam) {
+    conditions.push(`category_id = ${idx++}`);
+    values.push(parseInt(categoryParam));
+  }
+  if (conditionParam) {
+    conditions.push(`condition = ${idx++}`);
+    values.push(conditionParam);
+  }
+  if (minPriceParam) {
+    conditions.push(`price_cents >= ${idx++}`);
+    values.push(Math.round(parseFloat(minPriceParam) * 100));
+  }
+  if (maxPriceParam) {
+    conditions.push(`price_cents <= ${idx++}`);
+    values.push(Math.round(parseFloat(maxPriceParam) * 100));
+  }
+  if (qParam && qParam.trim()) {
+    conditions.push(`(title ILIKE ${idx} OR description ILIKE ${idx + 1})`);
+    const pattern = `%${qParam.trim()}%`;
+    values.push(pattern, pattern);
+    idx += 2;
+  }
+
+  const whereClause = conditions.join(" AND ");
+  const rows: Array<{
     id: number;
     seller_email: string;
     title: string;
@@ -46,19 +78,10 @@ export async function GET(req: NextRequest) {
     quantity: number;
     status: string;
     created_at: string;
-  }>;
-
-  if (categoryParam) {
-    rows = await q(
-      "SELECT * FROM " + P + "_listings WHERE status = $1 AND category_id = $2 ORDER BY created_at DESC",
-      ["active", parseInt(categoryParam)]
-    );
-  } else {
-    rows = await q(
-      "SELECT * FROM " + P + "_listings WHERE status = $1 ORDER BY created_at DESC",
-      ["active"]
-    );
-  }
+  }> = await q(
+    "SELECT * FROM " + P + "_listings WHERE " + whereClause + " ORDER BY created_at DESC",
+    values
+  );
 
   const listingIds = rows.map((r) => r.id);
   let photoMap: Record<number, string[]> = {};

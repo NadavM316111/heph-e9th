@@ -155,6 +155,14 @@ export default function App() {
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
   const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
 
+  // Search & filter state
+  const [searchQ, setSearchQ] = useState("");
+  const [filterCondition, setFilterCondition] = useState("");
+  const [filterMinPrice, setFilterMinPrice] = useState("");
+  const [filterMaxPrice, setFilterMaxPrice] = useState("");
+  const [listingsLoading, setListingsLoading] = useState(false);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Cart
   const [cart, setCart] = useState<CartItem[]>([]);
   const [cartOpen, setCartOpen] = useState(false);
@@ -217,7 +225,7 @@ export default function App() {
   useEffect(() => {
     checkAuth();
     fetchCategories();
-    fetchListings(null);
+    fetchListings({});
 
     // After Stripe onboarding, they land back at /?seller=done or /?seller=retry
     const params = new URLSearchParams(window.location.search);
@@ -268,7 +276,7 @@ export default function App() {
   }, [user]);
 
   useEffect(() => {
-    fetchListings(selectedCategory);
+    fetchListings({ categoryId: selectedCategory, q: searchQ, condition: filterCondition, minPrice: filterMinPrice, maxPrice: filterMaxPrice });
   }, [selectedCategory]);
 
   useEffect(() => {
@@ -408,17 +416,44 @@ export default function App() {
     } catch {}
   }
 
-  async function fetchListings(categoryId: number | null) {
+  async function fetchListings(opts: {
+    categoryId?: number | null;
+    q?: string;
+    condition?: string;
+    minPrice?: string;
+    maxPrice?: string;
+  } = {}) {
+    setListingsLoading(true);
     try {
-      const url = categoryId ? `/api/listings?category=${categoryId}` : "/api/listings";
+      const params = new URLSearchParams();
+      if (opts.categoryId) params.set("category", String(opts.categoryId));
+      if (opts.q && opts.q.trim()) params.set("q", opts.q.trim());
+      if (opts.condition) params.set("condition", opts.condition);
+      if (opts.minPrice && opts.minPrice.trim()) params.set("min_price", opts.minPrice.trim());
+      if (opts.maxPrice && opts.maxPrice.trim()) params.set("max_price", opts.maxPrice.trim());
+      const url = "/api/listings" + (params.toString() ? "?" + params.toString() : "");
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         setListings(data);
       }
     } catch {}
+    finally { setListingsLoading(false); }
   }
 
+  function triggerSearch(opts: {
+    q?: string;
+    condition?: string;
+    minPrice?: string;
+    maxPrice?: string;
+    categoryId?: number | null;
+  }) {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => {
+      fetchListings(opts);
+    }, 320);
+  }
+  
   async function fetchOrders() {
     setOrdersLoading(true);
     try {
@@ -571,6 +606,15 @@ export default function App() {
       }
     } catch {}
     finally { setThreadSending(false); }
+  }
+
+  function clearFilters() {
+    setSearchQ("");
+    setFilterCondition("");
+    setFilterMinPrice("");
+    setFilterMaxPrice("");
+    setSelectedCategory(null);
+    fetchListings({});
   }
 
   async function fetchMyListings() {
@@ -1593,67 +1637,282 @@ export default function App() {
         {/* ── Browse ── */}
         {view === "browse" && !selectedListing && (
           <>
-            <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 8 }}>Find something great</h1>
-            <p style={{ color: "#666", marginBottom: 24 }}>Browse listings from sellers across the marketplace.</p>
+            <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 4 }}>Find something great</h1>
+            <p style={{ color: "#666", marginBottom: 20 }}>Browse listings from sellers across the marketplace.</p>
 
-            {/* Category filter */}
-            <div style={s.catBar}>
-              <button
-                style={selectedCategory === null ? s.catChipActive : s.catChip}
-                onClick={() => setSelectedCategory(null)}
-              >All</button>
-              {topCategories.map((c) => (
+            {/* Search bar */}
+            <div style={{ position: "relative", marginBottom: 20 }}>
+              <span style={{
+                position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)",
+                fontSize: 17, color: "#bbb", pointerEvents: "none", lineHeight: 1,
+              }}>🔍</span>
+              <input
+                style={{
+                  width: "100%", padding: "11px 44px 11px 42px", borderRadius: 10,
+                  border: "1.5px solid #e0e0e0", fontSize: 15, boxSizing: "border-box",
+                  outline: "none", background: "#fff",
+                  boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
+                  transition: "border-color 0.15s",
+                }}
+                type="search"
+                placeholder="Search listings by title or description…"
+                value={searchQ}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setSearchQ(v);
+                  triggerSearch({ q: v, condition: filterCondition, minPrice: filterMinPrice, maxPrice: filterMaxPrice, categoryId: selectedCategory });
+                }}
+              />
+              {searchQ && (
                 <button
-                  key={c.id}
-                  style={selectedCategory === c.id ? s.catChipActive : s.catChip}
-                  onClick={() => setSelectedCategory(c.id)}
-                >{c.name}</button>
-              ))}
+                  onClick={() => {
+                    setSearchQ("");
+                    triggerSearch({ q: "", condition: filterCondition, minPrice: filterMinPrice, maxPrice: filterMaxPrice, categoryId: selectedCategory });
+                  }}
+                  style={{
+                    position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)",
+                    background: "none", border: "none", cursor: "pointer",
+                    fontSize: 18, color: "#bbb", lineHeight: 1, padding: 2,
+                  }}
+                  title="Clear search"
+                >×</button>
+              )}
             </div>
 
-            {listings.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "60px 0", color: "#999" }}>
-                <div style={{ fontSize: 48, marginBottom: 12 }}>🛍️</div>
-                <div style={{ fontSize: 18, fontWeight: 600 }}>No listings yet</div>
-                <div style={{ fontSize: 14, marginTop: 4 }}>Be the first to list something!</div>
-              </div>
-            ) : (
-              <div style={s.grid}>
-                {listings.map((listing) => (
-                  <div
-                    key={listing.id}
-                    style={s.card}
-                    onClick={() => setSelectedListing(listing)}
-                    onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLDivElement).style.transform = "translateY(-2px)";
-                      (e.currentTarget as HTMLDivElement).style.boxShadow = "0 4px 20px rgba(0,0,0,0.12)";
+            {/* Main layout: sidebar + results */}
+            <div style={{ display: "flex", gap: 24, alignItems: "flex-start" }}>
+
+              {/* Filter sidebar */}
+              <div style={{
+                width: 200, flexShrink: 0,
+                background: "#fff", borderRadius: 14,
+                border: "1px solid #ebebeb",
+                padding: "18px 16px",
+                boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
+                position: "sticky", top: 76,
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "#333" }}>Filters</div>
+                  {(selectedCategory !== null || filterCondition || filterMinPrice || filterMaxPrice) && (
+                    <button
+                      onClick={clearFilters}
+                      style={{
+                        background: "none", border: "none", color: "#e05c2a",
+                        fontSize: 12, cursor: "pointer", fontWeight: 600, padding: 0,
+                      }}
+                    >Clear all</button>
+                  )}
+                </div>
+
+                {/* Category */}
+                <div style={{ marginBottom: 18 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+                    Category
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                    <button
+                      onClick={() => {
+                        setSelectedCategory(null);
+                        triggerSearch({ q: searchQ, condition: filterCondition, minPrice: filterMinPrice, maxPrice: filterMaxPrice, categoryId: null });
+                      }}
+                      style={{
+                        textAlign: "left", padding: "6px 10px", borderRadius: 7, border: "none",
+                        cursor: "pointer", fontSize: 13, fontWeight: selectedCategory === null ? 700 : 400,
+                        background: selectedCategory === null ? "#fff4ec" : "transparent",
+                        color: selectedCategory === null ? "#e05c2a" : "#444",
+                        transition: "background 0.12s",
+                      }}
+                    >All Categories</button>
+                    {topCategories.map((c) => (
+                      <button
+                        key={c.id}
+                        onClick={() => {
+                          setSelectedCategory(c.id);
+                          triggerSearch({ q: searchQ, condition: filterCondition, minPrice: filterMinPrice, maxPrice: filterMaxPrice, categoryId: c.id });
+                        }}
+                        style={{
+                          textAlign: "left", padding: "6px 10px", borderRadius: 7, border: "none",
+                          cursor: "pointer", fontSize: 13, fontWeight: selectedCategory === c.id ? 700 : 400,
+                          background: selectedCategory === c.id ? "#fff4ec" : "transparent",
+                          color: selectedCategory === c.id ? "#e05c2a" : "#444",
+                          transition: "background 0.12s",
+                        }}
+                      >{c.name}</button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Condition */}
+                <div style={{ marginBottom: 18 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+                    Condition
+                  </div>
+                  <select
+                    value={filterCondition}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setFilterCondition(v);
+                      triggerSearch({ q: searchQ, condition: v, minPrice: filterMinPrice, maxPrice: filterMaxPrice, categoryId: selectedCategory });
                     }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLDivElement).style.transform = "none";
-                      (e.currentTarget as HTMLDivElement).style.boxShadow = "0 1px 6px rgba(0,0,0,0.07)";
+                    style={{
+                      width: "100%", padding: "7px 10px", borderRadius: 7,
+                      border: "1px solid #e0e0e0", fontSize: 13,
+                      background: "#fff", outline: "none", color: "#333",
                     }}
                   >
-                    {listing.photos && listing.photos[0]
-                      ? <img src={listing.photos[0]} alt={listing.title} style={s.cardImg as React.CSSProperties} />
-                      : <div style={s.cardImgPlaceholder}>📦</div>
-                    }
-                    <div style={s.cardBody}>
-                      <div style={s.cardTitle}>{listing.title}</div>
-                      <div style={s.cardPrice}>{formatPrice(listing.price_cents)}</div>
-                      <div style={s.cardMeta}>
-                        <span
-                          style={{ ...s.badge, background: conditionColor(listing.condition), color: "#333" }}
-                        >{conditionLabel(listing.condition)}</span>
-                        {" · "}{listing.category_name}
-                      </div>
-                      <div style={{ ...s.cardMeta, marginTop: 6 }}>
-                        Seller: <strong>{sellerName(listing.seller_email)}</strong>
-                      </div>
-                    </div>
+                    <option value="">Any condition</option>
+                    {CONDITIONS.map((c) => (
+                      <option key={c.value} value={c.value}>{c.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Price range */}
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+                    Price Range
                   </div>
-                ))}
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      placeholder="Min"
+                      value={filterMinPrice}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setFilterMinPrice(v);
+                        triggerSearch({ q: searchQ, condition: filterCondition, minPrice: v, maxPrice: filterMaxPrice, categoryId: selectedCategory });
+                      }}
+                      style={{
+                        width: 0, flex: 1, padding: "7px 8px", borderRadius: 7,
+                        border: "1px solid #e0e0e0", fontSize: 13, outline: "none",
+                        background: "#fff",
+                      }}
+                    />
+                    <span style={{ fontSize: 12, color: "#bbb", flexShrink: 0 }}>–</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      placeholder="Max"
+                      value={filterMaxPrice}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setFilterMaxPrice(v);
+                        triggerSearch({ q: searchQ, condition: filterCondition, minPrice: filterMinPrice, maxPrice: v, categoryId: selectedCategory });
+                      }}
+                      style={{
+                        width: 0, flex: 1, padding: "7px 8px", borderRadius: 7,
+                        border: "1px solid #e0e0e0", fontSize: 13, outline: "none",
+                        background: "#fff",
+                      }}
+                    />
+                  </div>
+                  <div style={{ fontSize: 11, color: "#bbb", marginTop: 4 }}>Prices in USD ($)</div>
+                </div>
               </div>
-            )}
+
+              {/* Results column */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {/* Result count / active filters summary */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, minHeight: 24 }}>
+                  <div style={{ fontSize: 13, color: "#888" }}>
+                    {listingsLoading ? (
+                      <span>Searching…</span>
+                    ) : (
+                      <span>
+                        <strong style={{ color: "#333" }}>{listings.length}</strong>
+                        {" result"}{listings.length !== 1 ? "s" : ""}
+                        {(searchQ || filterCondition || filterMinPrice || filterMaxPrice || selectedCategory) && (
+                          <span style={{ marginLeft: 6, color: "#bbb" }}>matching your filters</span>
+                        )}
+                      </span>
+                    )}
+                  </div>
+                  {/* Active filter chips */}
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    {searchQ && (
+                      <span style={{ ...s.badge, background: "#f0ede8", color: "#c2410c", fontSize: 12, padding: "3px 10px", display: "flex", alignItems: "center", gap: 4 }}>
+                        "{searchQ}"
+                        <button onClick={() => { setSearchQ(""); triggerSearch({ q: "", condition: filterCondition, minPrice: filterMinPrice, maxPrice: filterMaxPrice, categoryId: selectedCategory }); }}
+                          style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: "#c2410c", padding: 0, lineHeight: 1 }}>×</button>
+                      </span>
+                    )}
+                    {filterCondition && (
+                      <span style={{ ...s.badge, background: "#f0ede8", color: "#c2410c", fontSize: 12, padding: "3px 10px", display: "flex", alignItems: "center", gap: 4 }}>
+                        {conditionLabel(filterCondition)}
+                        <button onClick={() => { setFilterCondition(""); triggerSearch({ q: searchQ, condition: "", minPrice: filterMinPrice, maxPrice: filterMaxPrice, categoryId: selectedCategory }); }}
+                          style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: "#c2410c", padding: 0, lineHeight: 1 }}>×</button>
+                      </span>
+                    )}
+                    {(filterMinPrice || filterMaxPrice) && (
+                      <span style={{ ...s.badge, background: "#f0ede8", color: "#c2410c", fontSize: 12, padding: "3px 10px", display: "flex", alignItems: "center", gap: 4 }}>
+                        {filterMinPrice ? `${filterMinPrice}` : "$0"} – {filterMaxPrice ? `${filterMaxPrice}` : "any"}
+                        <button onClick={() => { setFilterMinPrice(""); setFilterMaxPrice(""); triggerSearch({ q: searchQ, condition: filterCondition, minPrice: "", maxPrice: "", categoryId: selectedCategory }); }}
+                          style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: "#c2410c", padding: 0, lineHeight: 1 }}>×</button>
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {listingsLoading ? (
+                  <div style={{ textAlign: "center", padding: "60px 0", color: "#bbb" }}>
+                    <div style={{ fontSize: 36, marginBottom: 10 }}>⏳</div>
+                    <div style={{ fontSize: 15 }}>Searching…</div>
+                  </div>
+                ) : listings.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "60px 0", color: "#999" }}>
+                    <div style={{ fontSize: 48, marginBottom: 12 }}>🔍</div>
+                    <div style={{ fontSize: 18, fontWeight: 600 }}>No listings found</div>
+                    <div style={{ fontSize: 14, marginTop: 4, marginBottom: 20, color: "#bbb" }}>
+                      {(searchQ || filterCondition || filterMinPrice || filterMaxPrice || selectedCategory)
+                        ? "Try adjusting your search or filters."
+                        : "Be the first to list something!"}
+                    </div>
+                    {(searchQ || filterCondition || filterMinPrice || filterMaxPrice || selectedCategory) && (
+                      <button style={s.secondaryBtn} onClick={clearFilters}>Clear all filters</button>
+                    )}
+                  </div>
+                ) : (
+                  <div style={s.grid}>
+                    {listings.map((listing) => (
+                      <div
+                        key={listing.id}
+                        style={s.card}
+                        onClick={() => setSelectedListing(listing)}
+                        onMouseEnter={(e) => {
+                          (e.currentTarget as HTMLDivElement).style.transform = "translateY(-2px)";
+                          (e.currentTarget as HTMLDivElement).style.boxShadow = "0 4px 20px rgba(0,0,0,0.12)";
+                        }}
+                        onMouseLeave={(e) => {
+                          (e.currentTarget as HTMLDivElement).style.transform = "none";
+                          (e.currentTarget as HTMLDivElement).style.boxShadow = "0 1px 6px rgba(0,0,0,0.07)";
+                        }}
+                      >
+                        {listing.photos && listing.photos[0]
+                          ? <img src={listing.photos[0]} alt={listing.title} style={s.cardImg as React.CSSProperties} />
+                          : <div style={s.cardImgPlaceholder}>📦</div>
+                        }
+                        <div style={s.cardBody}>
+                          <div style={s.cardTitle}>{listing.title}</div>
+                          <div style={s.cardPrice}>{formatPrice(listing.price_cents)}</div>
+                          <div style={s.cardMeta}>
+                            <span
+                              style={{ ...s.badge, background: conditionColor(listing.condition), color: "#333" }}
+                            >{conditionLabel(listing.condition)}</span>
+                            {" · "}{listing.category_name}
+                          </div>
+                          <div style={{ ...s.cardMeta, marginTop: 6 }}>
+                            Seller: <strong>{sellerName(listing.seller_email)}</strong>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </>
         )}
 
