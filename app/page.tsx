@@ -767,6 +767,13 @@ export default function App() {
                       borderRadius: 10, padding: "12px 16px", marginBottom: 18,
                       textAlign: "center",
                     }}>
+                      <div style={{
+                        display: "inline-block", background: "#fef9c3", border: "1px solid #fde68a",
+                        borderRadius: 6, padding: "3px 10px", fontSize: 11, color: "#92400e",
+                        fontWeight: 600, marginBottom: 8,
+                      }}>
+                        ⚠️ Dev mode — no email service configured. Code shown here instead.
+                      </div>
                       <div style={{ fontSize: 12, color: "#555", marginBottom: 4 }}>Your reset code (copy this):</div>
                       <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: 6, color: "#166534", fontFamily: "monospace" }}>
                         {forgotToken}
