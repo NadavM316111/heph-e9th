@@ -12,6 +12,7 @@ const CONDITIONS = [
 
 type User = { email: string };
 type SellerStatus = { connected: boolean; ready: boolean };
+type Profile = { display_name: string; avatar_url: string; role: "buyer" | "seller" };
 type Category = { id: number; name: string; slug: string; parent_id: number | null };
 type Listing = {
   id: number;
@@ -39,11 +40,17 @@ export default function App() {
   const [sellerStatus, setSellerStatus] = useState<SellerStatus | null>(null);
   const [sellerLoading, setSellerLoading] = useState(false);
 
+  const [profile, setProfile] = useState<Profile>({ display_name: "", avatar_url: "", role: "buyer" });
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileSaved, setProfileSaved] = useState(false);
+  const [profileError, setProfileError] = useState("");
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+
   const [categories, setCategories] = useState<Category[]>([]);
   const [listings, setListings] = useState<Listing[]>([]);
   const [myListings, setMyListings] = useState<Listing[]>([]);
 
-  const [view, setView] = useState<"browse" | "sell" | "mylistings">("browse");
+  const [view, setView] = useState<"browse" | "sell" | "mylistings" | "profile">("browse");
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
   const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
 
@@ -72,6 +79,7 @@ export default function App() {
     if (user) {
       fetchSellerStatus();
       fetchMyListings();
+      fetchProfile();
     }
   }, [user]);
 
@@ -87,6 +95,55 @@ export default function App() {
         if (data.email) setUser({ email: data.email });
       }
     } catch {}
+  }
+
+  async function fetchProfile() {
+    try {
+      const res = await fetch("/api/profile");
+      if (res.ok) {
+        const data = await res.json();
+        setProfile(data);
+      }
+    } catch {}
+  }
+
+  async function handleProfileSave(e: React.FormEvent) {
+    e.preventDefault();
+    setProfileError("");
+    setProfileSaved(false);
+    setProfileLoading(true);
+    try {
+      const res = await fetch("/api/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          display_name: profile.display_name,
+          avatar_url: profile.avatar_url,
+          role: profile.role,
+        }),
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        setProfileError(d.error || "Failed to save");
+      } else {
+        setProfileSaved(true);
+        setTimeout(() => setProfileSaved(false), 2500);
+      }
+    } catch {
+      setProfileError("Network error");
+    } finally {
+      setProfileLoading(false);
+    }
+  }
+
+  async function handleAvatarChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch("/api/upload", { method: "POST", body: fd });
+    const data = await res.json();
+    if (data.url) setProfile((p) => ({ ...p, avatar_url: data.url }));
   }
 
   async function fetchSellerStatus() {
@@ -162,6 +219,7 @@ export default function App() {
     setUser(null);
     setSellerStatus(null);
     setMyListings([]);
+    setProfile({ display_name: "", avatar_url: "", role: "buyer" });
     setView("browse");
   }
 
@@ -478,6 +536,9 @@ export default function App() {
           <button style={view === "mylistings" ? s.navBtnActive : s.navBtn} onClick={() => setView("mylistings")}>
             My Listings
           </button>
+          <button style={view === "profile" ? s.navBtnActive : s.navBtn} onClick={() => setView("profile")}>
+            Profile
+          </button>
           <span style={{ fontSize: 13, color: "#888", marginLeft: 8 }}>{user.email}</span>
           <button style={s.secondaryBtn} onClick={handleLogout}>Sign out</button>
         </div>
@@ -711,6 +772,132 @@ export default function App() {
               )
             )}
           </>
+        )}
+
+        {/* ── Profile ── */}
+        {view === "profile" && (
+          <div style={{ maxWidth: 480, margin: "0 auto" }}>
+            <h1 style={s.sectionTitle}>Your Profile</h1>
+
+            {/* Avatar */}
+            <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 28 }}>
+              <div
+                style={{ position: "relative", width: 88, height: 88, flexShrink: 0, cursor: "pointer" }}
+                onClick={() => avatarInputRef.current?.click()}
+                title="Click to change avatar"
+              >
+                {profile.avatar_url ? (
+                  <img
+                    src={profile.avatar_url}
+                    alt="Avatar"
+                    style={{ width: 88, height: 88, borderRadius: "50%", objectFit: "cover", border: "3px solid #e05c2a" }}
+                  />
+                ) : (
+                  <div style={{
+                    width: 88, height: 88, borderRadius: "50%", background: "#f0ede8",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 36, border: "3px solid #e5e5e5",
+                  }}>
+                    👤
+                  </div>
+                )}
+                <div style={{
+                  position: "absolute", bottom: 0, right: 0,
+                  width: 26, height: 26, borderRadius: "50%",
+                  background: "#e05c2a", color: "#fff",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 14, border: "2px solid #fff",
+                }}>✏️</div>
+              </div>
+              <input
+                ref={avatarInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: "none" }}
+                onChange={handleAvatarChange}
+              />
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 18 }}>
+                  {profile.display_name || user.email}
+                </div>
+                <div style={{ fontSize: 13, color: "#888", marginTop: 2 }}>{user.email}</div>
+                <div style={{ marginTop: 6 }}>
+                  <span style={{
+                    ...s.badge,
+                    background: profile.role === "seller" ? "#fff4ec" : "#e8f0fe",
+                    color: profile.role === "seller" ? "#c2410c" : "#1a56db",
+                    fontSize: 12, padding: "3px 10px",
+                  }}>
+                    {profile.role === "seller" ? "Seller" : "Buyer"}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <form onSubmit={handleProfileSave}>
+              <label style={s.label}>Display Name</label>
+              <input
+                style={s.input}
+                value={profile.display_name}
+                onChange={(e) => setProfile((p) => ({ ...p, display_name: e.target.value }))}
+                placeholder="How should we call you?"
+                maxLength={80}
+              />
+
+              <label style={s.label}>Account Type</label>
+              <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+                {(["buyer", "seller"] as const).map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => setProfile((p) => ({ ...p, role: r }))}
+                    style={{
+                      flex: 1, padding: "14px 0", borderRadius: 10,
+                      border: profile.role === r ? "2px solid #e05c2a" : "2px solid #e5e5e5",
+                      background: profile.role === r ? "#fff4ec" : "#fff",
+                      cursor: "pointer", fontWeight: 600, fontSize: 15,
+                      color: profile.role === r ? "#e05c2a" : "#555",
+                      transition: "all 0.15s",
+                    }}
+                  >
+                    {r === "buyer" ? "🛒 Buyer" : "🏪 Seller"}
+                    <div style={{ fontSize: 11, fontWeight: 400, color: "#888", marginTop: 4 }}>
+                      {r === "buyer" ? "Browse & purchase items" : "List items for sale"}
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ background: "#f6f6f4", borderRadius: 10, padding: "12px 16px", marginBottom: 20, fontSize: 13, color: "#666" }}>
+                <strong>Email:</strong> {user.email}
+                {profile.role === "seller" && sellerStatus && !sellerStatus.ready && (
+                  <div style={{ marginTop: 8, color: "#92400e" }}>
+                    ⚠️ Payouts not set up yet —{" "}
+                    <button
+                      type="button"
+                      style={{ background: "none", border: "none", color: "#e05c2a", cursor: "pointer", fontWeight: 600, fontSize: 13, padding: 0 }}
+                      onClick={handleSetupPayouts}
+                    >
+                      set up payouts
+                    </button>
+                  </div>
+                )}
+                {profile.role === "seller" && sellerStatus?.ready && (
+                  <div style={{ marginTop: 8, color: "#166534" }}>✓ Payouts connected</div>
+                )}
+              </div>
+
+              {profileError && <div style={s.error}>{profileError}</div>}
+              {profileSaved && <div style={s.success}>Profile saved!</div>}
+
+              <button
+                style={{ ...s.primaryBtn, width: "100%", padding: "12px 0", fontSize: 16 }}
+                disabled={profileLoading}
+              >
+                {profileLoading ? "Saving…" : "Save Profile"}
+              </button>
+            </form>
+          </div>
         )}
 
         {/* ── My Listings ── */}
